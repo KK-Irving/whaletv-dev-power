@@ -1,0 +1,44 @@
+{
+  "hooks": [
+    {
+      "id": "block-sudo",
+      "name": "禁止 sudo 命令",
+      "eventType": "preToolUse",
+      "toolTypes": "shell",
+      "pattern": "^sudo\\s",
+      "action": "block",
+      "reason": "安全策略禁止执行 sudo 命令",
+      "alternative": "请使用当前用户权限执行操作"
+    },
+    {
+      "id": "block-root-search",
+      "name": "禁止根目录/家目录搜索",
+      "eventType": "preToolUse",
+      "toolTypes": "shell",
+      "pattern": "(find|grep)\\s+(/|~/)",
+      "action": "block",
+      "reason": "禁止在根目录或家目录执行大范围搜索",
+      "alternative": "请指定具体的源码子目录进行搜索"
+    },
+    {
+      "id": "block-tmp-write",
+      "name": "禁止写入 /tmp",
+      "eventType": "preToolUse",
+      "toolTypes": "shell",
+      "pattern": ">\\s*/tmp/|>>/tmp/",
+      "action": "block",
+      "reason": "禁止写入 /tmp 路径，避免临时文件丢失",
+      "alternative": "请使用 ~/tmp 目录替代 /tmp"
+    },
+    {
+      "id": "block-out-search",
+      "name": "禁止搜索编译输出目录",
+      "eventType": "preToolUse",
+      "toolTypes": "shell",
+      "pattern": "(find|grep|ls\\s+-R)\\s+.*(out/|prebuilts/)",
+      "action": "block",
+      "reason": "out/ 和 prebuilts/ 目录体积巨大，搜索会导致性能问题",
+      "alternative": "请使用 git grep 搜索源码，或指定具体的 src 子目录"
+    }
+  ]
+}
