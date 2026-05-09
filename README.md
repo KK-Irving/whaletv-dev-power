@@ -6,7 +6,8 @@
 
 ```
 whaletv-dev-power/
-├── POWER.md                              # Power 元数据与使用文档
+├── POWER.md                              # Power 元数据与使用文档（Kiro 标准格式）
+├── mcp.json                              # MCP 服务器配置（Kiro 标准格式）
 ├── README.md                             # 本文件
 ├── mcp-servers/
 │   ├── zmind-mcp-server/                 # Zmind (Redmine) MCP 服务器
@@ -27,7 +28,7 @@ whaletv-dev-power/
 │   ├── local-code-guide.md              # 本地源码操作指南
 │   └── safety-rules.md                  # 安全规则（三层防护）
 └── hooks/
-    └── safety-hooks.json                 # 命令拦截规则（4 条）
+    └── safety-hooks.json                 # 命令拦截规则参考（4 条）
 ```
 
 ## 功能概览
@@ -124,7 +125,20 @@ curl -s -o /dev/null -w "%{http_code}" \
   "$OPENGROK_URL/api/v1/configuration"
 ```
 
-### 4. 使用
+### 4. 安装 Power
+
+**方式一：本地目录安装（开发测试）**
+
+1. 在 Kiro 中打开 Powers 面板
+2. 点击 "Add Custom Power"
+3. 选择 "Local Directory"
+4. 输入本项目的完整路径
+
+**方式二：Git 仓库安装（团队共享）**
+
+将本项目推送到 GitHub 公开仓库后，团队成员可通过仓库 URL 安装。
+
+### 5. 使用
 
 在 AOSP 源码目录下启动 Kiro CLI：
 
@@ -169,6 +183,14 @@ ZMIND_API_KEY=your_key npx @modelcontextprotocol/inspector npx tsx src/index.ts
 - **传输协议**: stdio
 - **参数校验**: zod 3.24.4
 - **HTTP 客户端**: Node.js 内置 fetch
+
+## Kiro Power 标准
+
+本项目遵循 Kiro Power 标准结构：
+
+- `POWER.md` — 使用标准 frontmatter（name, displayName, description, keywords, author）
+- `mcp.json` — 标准 MCP 服务器配置格式
+- `steering/` — 按需加载的工作流指南
 
 ## 已知问题
 
