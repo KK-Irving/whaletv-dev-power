@@ -1,7 +1,7 @@
 ---
 name: "whaletv-dev-power"
 displayName: "WhaleTV Developer Power"
-description: "面向 WhaleTV AOSP 开发者的 AI 辅助工具包，集成 Zmind 项目管理、OpenGrok 代码搜索和团队标准工作流（PR/CR、Cherry-Pick、Bug 分析）"
+description: "面向 WhaleTV AOSP 开发者的 AI 辅助工具包，集成 Zmind 项目管理、OpenGrok 代码搜索和团队标准工作流"
 keywords: ["whaletv", "aosp", "zmind", "gerrit", "opengrok", "cherry-pick"]
 author: "WhaleTV Team"
 ---

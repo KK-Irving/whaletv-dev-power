@@ -2,8 +2,7 @@
   "mcpServers": {
     "zmind-mcp-server": {
       "command": "npx",
-      "args": ["tsx", "src/index.ts"],
-      "cwd": "./mcp-servers/zmind-mcp-server",
+      "args": ["tsx", "mcp-servers/zmind-mcp-server/src/index.ts"],
       "env": {
         "ZMIND_API_KEY": "ZMIND_API_KEY",
         "ZMIND_URL": "ZMIND_URL"
@@ -11,8 +10,7 @@
     },
     "opengrok-mcp-server": {
       "command": "npx",
-      "args": ["tsx", "src/index.ts"],
-      "cwd": "./mcp-servers/opengrok-mcp-server",
+      "args": ["tsx", "mcp-servers/opengrok-mcp-server/src/index.ts"],
       "env": {
         "OPENGROK_URL": "OPENGROK_URL",
         "OPENGROK_PROJECT": "OPENGROK_PROJECT"
