@@ -11,12 +11,12 @@ whaletv-dev-power/
 ├── README.md                             # 本文件
 ├── mcp-servers/
 │   ├── zmind-mcp-server/                 # Zmind (Redmine) MCP 服务器
-│   │   ├── package.json
+│   │   ├── package.json                  # npm: @kk-irving/zmind-mcp-server
 │   │   ├── tsconfig.json
 │   │   └── src/
 │   │       └── index.ts                  # 14 个工具实现
 │   └── opengrok-mcp-server/              # OpenGrok 代码搜索 MCP 服务器
-│       ├── package.json
+│       ├── package.json                  # npm: @kk-irving/opengrok-mcp-server
 │       ├── tsconfig.json
 │       └── src/
 │           └── index.ts                  # 2 个工具实现
@@ -30,6 +30,15 @@ whaletv-dev-power/
 └── hooks/
     └── safety-hooks.json                 # 命令拦截规则参考（4 条）
 ```
+
+## npm 包
+
+MCP 服务器已发布到 npm 公共仓库，用户安装 Power 后自动通过 `npx -y` 拉取运行，无需手动安装依赖。
+
+| 包名 | 版本 | 说明 |
+|------|------|------|
+| [@kk-irving/zmind-mcp-server](https://www.npmjs.com/package/@kk-irving/zmind-mcp-server) | 1.0.0 | Zmind 项目管理（14 个工具） |
+| [@kk-irving/opengrok-mcp-server](https://www.npmjs.com/package/@kk-irving/opengrok-mcp-server) | 1.0.0 | OpenGrok 代码搜索（2 个工具） |
 
 ## 功能概览
 
@@ -102,12 +111,20 @@ export ZMIND_URL="https://zmind.whaletv.com"       # 默认值
 export OPENGROK_PROJECT="d4_code"
 ```
 
-### 2. 安装依赖
+### 2. 安装 Power
 
-```bash
-cd mcp-servers/zmind-mcp-server && npm install
-cd ../opengrok-mcp-server && npm install
-```
+**方式一：GitHub URL 安装（推荐）**
+
+1. 在 Kiro 中打开 Powers 面板
+2. 点击 "Add Custom Power" → "GitHub URL"
+3. 输入：`https://github.com/KK-Irving/whaletv-dev-power`
+4. 安装完成后 MCP Server 会通过 npm 自动拉取，无需手动安装依赖
+
+**方式二：本地目录安装（开发测试）**
+
+1. 克隆仓库：`git clone https://github.com/KK-Irving/whaletv-dev-power.git`
+2. 在 Kiro Powers 面板 → "Add Custom Power" → "Local Directory"
+3. 选择克隆后的目录路径
 
 ### 3. 验证配置
 
@@ -125,20 +142,7 @@ curl -s -o /dev/null -w "%{http_code}" \
   "$OPENGROK_URL/api/v1/configuration"
 ```
 
-### 4. 安装 Power
-
-**方式一：本地目录安装（开发测试）**
-
-1. 在 Kiro 中打开 Powers 面板
-2. 点击 "Add Custom Power"
-3. 选择 "Local Directory"
-4. 输入本项目的完整路径
-
-**方式二：Git 仓库安装（团队共享）**
-
-将本项目推送到 GitHub 公开仓库后，团队成员可通过仓库 URL 安装。
-
-### 5. 使用
+### 4. 使用
 
 在 AOSP 源码目录下启动 Kiro CLI：
 
@@ -176,6 +180,19 @@ cd mcp-servers/zmind-mcp-server
 ZMIND_API_KEY=your_key npx @modelcontextprotocol/inspector npx tsx src/index.ts
 ```
 
+### 发布新版本到 npm
+
+```bash
+# 更新版本号
+cd mcp-servers/zmind-mcp-server
+npm version patch  # 或 minor / major
+npm publish --access public
+
+cd ../opengrok-mcp-server
+npm version patch
+npm publish --access public
+```
+
 ## 技术栈
 
 - **语言**: TypeScript (ES2022, ESM)
@@ -189,7 +206,7 @@ ZMIND_API_KEY=your_key npx @modelcontextprotocol/inspector npx tsx src/index.ts
 本项目遵循 Kiro Power 标准结构：
 
 - `POWER.md` — 使用标准 frontmatter（name, displayName, description, keywords, author）
-- `mcp.json` — 标准 MCP 服务器配置格式
+- `mcp.json` — 标准 MCP 服务器配置，通过 `npx -y @kk-irving/...` 从 npm 拉取运行
 - `steering/` — 按需加载的工作流指南
 
 ## 已知问题

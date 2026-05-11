@@ -1,11 +1,18 @@
 {
-  "name": "zmind-mcp-server",
+  "name": "@kk-irving/zmind-mcp-server",
   "version": "1.0.0",
   "description": "Zmind (Redmine) MCP Server for WhaleTV Developer Power",
   "type": "module",
+  "bin": {
+    "zmind-mcp-server": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "start": "tsx src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.12.1",
@@ -15,5 +22,11 @@
     "@types/node": "24.0.3",
     "tsx": "4.19.4",
     "typescript": "5.8.3"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KK-Irving/whaletv-dev-power.git",
+    "directory": "mcp-servers/zmind-mcp-server"
+  },
+  "license": "UNLICENSED"
 }

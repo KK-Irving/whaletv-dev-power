@@ -2,18 +2,18 @@
   "mcpServers": {
     "zmind-mcp-server": {
       "command": "npx",
-      "args": ["tsx", "mcp-servers/zmind-mcp-server/src/index.ts"],
+      "args": ["-y", "@kk-irving/zmind-mcp-server"],
       "env": {
-        "ZMIND_API_KEY": "ZMIND_API_KEY",
-        "ZMIND_URL": "ZMIND_URL"
+        "ZMIND_API_KEY": "${ZMIND_API_KEY}",
+        "ZMIND_URL": "${ZMIND_URL}"
       }
     },
     "opengrok-mcp-server": {
       "command": "npx",
-      "args": ["tsx", "mcp-servers/opengrok-mcp-server/src/index.ts"],
+      "args": ["-y", "@kk-irving/opengrok-mcp-server"],
       "env": {
-        "OPENGROK_URL": "OPENGROK_URL",
-        "OPENGROK_PROJECT": "OPENGROK_PROJECT"
+        "OPENGROK_URL": "${OPENGROK_URL}",
+        "OPENGROK_PROJECT": "${OPENGROK_PROJECT}"
       }
     }
   }

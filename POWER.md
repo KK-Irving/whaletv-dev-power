@@ -70,13 +70,6 @@ export OPENGROK_PROJECT="d4_code"
 
 设置后执行 `source ~/.bashrc` 使配置生效。
 
-### 安装依赖
-
-```bash
-cd mcp-servers/zmind-mcp-server && npm install
-cd ../opengrok-mcp-server && npm install
-```
-
 ### 配置验证
 
 ```bash
@@ -204,8 +197,8 @@ cd ~/cvte_code/amlogic && kiro
 
 **解决**：
 1. 确认 Node.js 版本 >= 18：`node --version`
-2. 确认依赖已安装：`cd mcp-servers/zmind-mcp-server && npm install`
-3. 手动测试启动：`ZMIND_API_KEY=your_key npx tsx src/index.ts`
+2. 手动测试 MCP Server 是否可运行：`npx -y @kk-irving/zmind-mcp-server`
+3. 如果报网络错误，确认 npm registry 可达：`npm ping`
 
 ## MCP Config Placeholders
 
