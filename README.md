@@ -105,23 +105,27 @@ AI 会自动获取你在 Zmind 上的项目列表，然后请你提供项目与�
 
 这样后续分析 Issue 时，AI 能自动定位到正确的代码目录进行搜索。
 
-#### 3.3 Gerrit 连接验证
+#### 3.3 Gerrit 连接配置
 
-AI 会确认你的 Gerrit 配置：
-- 是否能访问 https://whale-gerrit.zeasn.com/
-- `gerritpush` 命令是否可用
-- 默认 Reviewer 列表（可选）
+AI 会请你提供 Gerrit 的用户名和密码，然后通过 SSH 实际验证连通性。
 
-你可以告诉 AI：
-> "Gerrit 已配置好，gerritpush 可用"
-> "我的默认 Reviewer 是 zhangsan, lisi"
+你可以这样告诉 AI：
+> "我的 Gerrit 用户名是 xxx，密码是 xxx"
 
-#### 3.4 内部文档验证
+验证通过后会显示 Gerrit 版本信息（如 `gerrit version 3.6.0`）。
 
-AI 会确认你是否能访问 https://docs.whaletv.com/
+> 前提：你的 SSH 公钥需要已上传到 Gerrit（Settings → SSH Keys）
 
-你可以直接回复：
-> "文档系统可以正常访问"
+#### 3.4 内部文档系统配置
+
+AI 会请你提供文档系统（docs.whaletv.com）的用户名和密码，然后通过 API 实际验证连通性。
+
+你可以这样告诉 AI：
+> "文档系统的用户名是 xxx，密码是 xxx"
+
+验证通过后会显示 "✅ 内部文档系统连接正常"。
+
+> 注意：用户名区分大小写
 
 #### 3.5 配置完成
 
@@ -203,21 +207,26 @@ AI 会确认你是否能访问 https://docs.whaletv.com/
 ### Zmind 项目管理
 
 - **地址**: https://zmind.whaletv.com/
+- **认证**: API Key（配置在 mcp.json 中）
 - **功能**: Issue 查询/创建/更新、工时记录、项目成员查询
 - **项目链接格式**: `https://zmind.whaletv.com/projects/<identifier>`
 
 ### Gerrit 代码评审
 
 - **地址**: https://whale-gerrit.zeasn.com/
-- **功能**: 代码推送、Change 查询、Cherry-Pick、评论处理
+- **认证**: SSH 密钥（端口 29418）+ HTTP 密码（写操作）
+- **配置需提供**: 用户名、密码
+- **功能**: 提交记录查询、Cherry-Pick、评论处理
 - **推送命令**: `gerritpush`
-- **Change 链接格式**: `https://whale-gerrit.zeasn.com/c/<project>/+/<number>`
+- **Change 链接格式**: `http://whale-gerrit.zeasn.com/c/<project>/+/<number>`
 
-### 内部文档
+### 内部文档（Confluence）
 
 - **地址**: https://docs.whaletv.com/
-- **功能**: 技术文档查询、已知问题检索、设计规范参考
-- **使用方式**: AI 在分析问题时会建议查阅相关文档
+- **认证**: HTTP Basic Auth（用户名 + 密码，注意用户名区分大小写）
+- **配置需提供**: 用户名、密码
+- **功能**: CQL 全文搜索、页面内容获取
+- **使用方式**: AI 在分析问题时自动搜索相关文档
 
 ### OpenGrok 代码搜索（暂停）
 

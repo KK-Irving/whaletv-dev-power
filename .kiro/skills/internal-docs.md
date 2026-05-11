@@ -2,75 +2,152 @@
 inclusion: auto
 ---
 
-# Skill: 内部文档查询
+# Skill: 内部文档查询（Confluence）
 
 ## 目的
 
-在分析问题、处理 Bug 或开发新功能时，查询 WhaleTV 内部文档系统，确认是否有相关的技术文档、已知问题、解决方案或设计规范。
+通过 Confluence REST API 搜索和获取 WhaleTV 内部技术文档，在分析问题时自动查找相关的已知问题、解决方案和设计规范。
 
 ## 文档系统信息
 
 - **地址**: https://docs.whaletv.com/
-- **类型**: 内部知识库/Wiki
-- **内容**: 技术文档、设计规范、已知问题、FAQ、开发指南等
+- **平台**: Atlassian Confluence 6.9.0（运行在 Apache Tomcat 8.0.51 上）
+- **认证方式**: HTTP Basic Auth
 
-## 使用场景
+## 用户需提供的配置
+
+| 配置项 | UI 显示 | 说明 |
+|--------|---------|------|
+| Confluence 用户名 | 用户名 | 公司账号（注意大小写） |
+| Confluence 密码 | 密码 | 公司密码 |
+
+> 注意：用户名区分大小写（如 `Winn.Wei` 而非 `winn.wei`）
+
+## 连接验证
+
+```bash
+# PowerShell
+$cred = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("<用户名>:<密码>"))
+$headers = @{ Authorization = "Basic $cred" }
+Invoke-WebRequest -Uri "https://docs.whaletv.com/rest/api/content?limit=1" -Headers $headers -UseBasicParsing
+```
+
+预期返回 JSON 格式的内容列表。如果返回 401 说明认证失败。
+
+## API 调用方式
+
+所有请求需要携带 Basic Auth 头：
+```
+Authorization: Basic <base64(用户名:密码)>
+```
+
+## 搜索内容（核心功能）
+
+### CQL 搜索
+
+```
+GET /rest/api/content/search?cql=text~"<关键词>"&limit=5
+```
+
+### 返回数据结构
+
+```json
+{
+  "results": [
+    {
+      "id": "4587596",
+      "type": "page",
+      "status": "current",
+      "title": "Pinpoint 分布式监控使用教程",
+      "_expandable": {
+        "container": "/rest/api/space/RDCenter",
+        "body": "",
+        "space": "/rest/api/space/RDCenter"
+      },
+      "_links": {
+        "self": "https://docs.whaletv.com/rest/api/content/4587596",
+        "webui": "/pages/viewpage.action?pageId=4587596"
+      }
+    }
+  ],
+  "start": 0,
+  "limit": 3,
+  "size": 3,
+  "_links": {
+    "base": "https://docs.whaletv.com",
+    "next": "/rest/api/content/search?limit=3&start=3&cql=text~%22OTA%22"
+  }
+}
+```
+
+### 结果类型
+
+- `"type": "page"` — 文档页面
+- `"type": "attachment"` — 附件文件（PDF、Excel 等）
+
+### 获取页面正文
+
+```
+GET /rest/api/content/<page_id>?expand=body.view
+```
+
+## 搜索策略
 
 ### 场景 1：Bug 分析时查文档
 
-在 Bug 分析工作流的"分析问题"阶段，检查内部文档是否有相关的已知问题或解决方案：
-
-- 搜索异常类名或错误关键字
-- 查找相关模块的技术文档
-- 确认是否有已知的 workaround
+搜索关键词策略：
+- 异常类名（如 `text~"NullPointerException TvScanConfig"`）
+- 模块名 + "已知问题"（如 `text~"DTV 已知问题"`）
+- 错误码（如 `text~"ERROR_CODE_1234"`）
 
 ### 场景 2：PR/CR 处理时查规范
 
-在修改代码前，查询相关模块的设计文档或编码规范：
+搜索关键词策略：
+- 模块名 + "设计文档"（如 `text~"TvInput 设计文档"`）
+- 接口名 + "规范"（如 `text~"ScanManager 接口规范"`）
 
-- 模块的架构设计文档
-- API 接口规范
-- 编码风格要求
+### 场景 3：用户主动查询
 
-### 场景 3：新功能开发时查参考
+用户直接要求查文档时：
+```
+用户: "查一下文档里有没有关于 OTA 升级的说明"
+AI: 搜索 CQL: text~"OTA 升级"
+```
 
-开发新功能时，查询是否有相关的技术方案或参考实现：
+## 结果展示格式
 
-- 类似功能的实现文档
-- 技术选型讨论记录
-- 接口设计文档
-
-## 查询方式
-
-由于内部文档系统可能需要认证访问，AI 应：
-
-1. **提示用户查询**：当分析中遇到不确定的问题时，建议用户到 docs.whaletv.com 搜索相关关键词
-2. **引用文档链接**：如果用户提供了文档链接，读取并结合文档内容进行分析
-3. **记录文档发现**：在分析报告中标注"建议参考内部文档: [关键词]"
-
-## 建议查询的关键词模板
-
-| 场景 | 建议搜索关键词 |
-|------|---------------|
-| Bug 分析 | 异常类名、错误码、模块名 + "已知问题" |
-| 代码修改 | 模块名 + "设计文档"、接口名 + "规范" |
-| 新功能 | 功能名 + "方案"、模块名 + "架构" |
-
-## 输出格式
-
-当建议用户查询文档时，使用以下格式：
+### 查到相关文档时
 
 ```
-💡 建议查阅内部文档
+📄 找到相关内部文档：
 
-搜索地址: https://docs.whaletv.com/
-建议关键词: [具体关键词]
-查询目的: [为什么需要查这个]
+1. Pinpoint 分布式监控使用教程
+   链接: https://docs.whaletv.com/pages/viewpage.action?pageId=4587596
+   空间: RDCenter
+
+2. OTA检查流程优化.pdf [附件]
+   链接: https://docs.whaletv.com/pages/viewpage.action?pageId=82973869
+
+建议参考以上文档中的相关内容。
 ```
+
+### 未查到时
+
+```
+📄 内部文档中未找到与 "关键词" 相关的内容。
+```
+
+## 链接构造规则
+
+- 页面链接: `https://docs.whaletv.com/pages/viewpage.action?pageId=<id>`
+- 附件链接: 使用返回的 `_links.webui` 字段拼接 base URL
+- 完整 URL: `https://docs.whaletv.com` + `_links.webui`
 
 ## 关键约束
 
-- 不假设文档内容，必须由用户确认或提供文档链接
+- 不要在输出中暴露 Confluence 密码
+- 搜索结果最多展示 5 条最相关的
+- 优先展示 `type: "page"` 的结果，附件次之
+- 如果认证失败，提示用户检查用户名密码（注意大小写）
 - 文档查询是辅助手段，不阻塞主工作流
-- 如果用户提供了文档链接，优先参考文档中的方案
-- 在分析报告的"修复建议"中，可以建议用户参考特定文档
+- 返回的标题可能包含 UTF-8 编码的中文，需正确解码显示

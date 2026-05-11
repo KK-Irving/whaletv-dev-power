@@ -59,54 +59,74 @@ inclusion: auto
 
 ### ③ Gerrit 连接验证
 
-**AI 动作**: 提示用户确认 Gerrit 配置状态。
+**AI 动作**: 获取用户的 Gerrit 用户名，然后通过 SSH 实际验证连通性。
 
-**展示格式**:
+**引导提示**:
 ```
-接下来验证 Gerrit 连接。
+接下来配置 Gerrit 连接。
 
-Gerrit 地址: https://whale-gerrit.zeasn.com/
-认证方式: .gitcookies 或 ~/.netrc
-
-请确认以下几点：
-1. 你能正常访问 https://whale-gerrit.zeasn.com/ 吗？（是/否）
-2. gerritpush 命令是否可用？（在终端执行 `which gerritpush` 确认）
-3. 你的默认 Reviewer 列表是？（可选，后续推送时会用到）
+请提供你的 Gerrit 账号信息：
+- 用户名：（登录 https://whale-gerrit.zeasn.com/ 的用户名）
+- 密码：（Gerrit Settings → HTTP Credentials 中生成的 HTTP 密码）
 ```
 
-- IF 用户确认可用 → 显示 "✅ Gerrit 配置正常"
-- IF 用户说不可用 → 提供配置指引：
+**验证方式**: 用户提供用户名后，执行 SSH 验证：
+```bash
+ssh -p 29418 <用户名>@whale-gerrit.zeasn.com gerrit version
+```
+
+- IF 返回版本信息（如 `gerrit version 3.6.0`）→ 显示 "✅ Gerrit 连接正常"
+- IF 连接失败 → 引导用户配置 SSH 密钥：
   ```
-  Gerrit 认证配置方法：
+  ❌ Gerrit SSH 连接失败
   
-  方式一：.gitcookies（推荐）
-  1. 登录 https://whale-gerrit.zeasn.com/
-  2. Settings → HTTP Credentials → Generate Password
-  3. 将生成的 cookie 行添加到 ~/.gitcookies
+  请确保你的 SSH 公钥已上传到 Gerrit：
+  1. 生成 SSH 密钥（如果没有）：ssh-keygen -t rsa -b 4096
+  2. 复制公钥：cat ~/.ssh/id_rsa.pub
+  3. 登录 https://whale-gerrit.zeasn.com/ → Settings → SSH Keys → Add Key
+  4. 粘贴公钥并保存
   
-  方式二：~/.netrc
-  machine whale-gerrit.zeasn.com
-  login 你的用户名
-  password 你的HTTP密码
+  配置完成后请告诉我，我会重新验证。
   ```
+
+**可选**: 询问默认 Reviewer 列表（后续推送时使用）。
 
 ---
 
-### ④ 内部文档连接验证
+### ④ 内部文档系统连接验证
 
-**AI 动作**: 提示用户确认内部文档系统的访问状态。
+**AI 动作**: 获取用户的 Confluence 账号密码，然后通过 REST API 实际验证连通性。
 
-**展示格式**:
+**引导提示**:
 ```
-最后验证内部文档系统。
+接下来配置内部文档系统（Confluence）连接。
 
 文档地址: https://docs.whaletv.com/
-
-请确认：你能正常访问 https://docs.whaletv.com/ 吗？（是/否）
+请提供你的账号信息：
+- 用户名：（公司账号）
+- 密码：（公司密码）
 ```
 
-- IF 用户确认可用 → 显示 "✅ 内部文档可访问"
-- IF 用户说不可用 → 标注 "⚠️ 内部文档暂不可用，后续分析问题时将跳过文档查询步骤"
+**验证方式**: 用户提供凭据后，执行 API 验证：
+```bash
+# PowerShell
+$cred = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("<用户名>:<密码>"))
+$headers = @{ Authorization = "Basic $cred" }
+Invoke-WebRequest -Uri "https://docs.whaletv.com/rest/api/content?limit=1" -Headers $headers -UseBasicParsing
+```
+
+- IF 返回 JSON 内容 → 显示 "✅ 内部文档系统连接正常"
+- IF 返回 401 → 提示认证失败：
+  ```
+  ❌ 文档系统认证失败（HTTP 401）
+  
+  请确认用户名和密码是否正确（与浏览器登录 docs.whaletv.com 时相同）。
+  注意：用户名可能区分大小写。
+  
+  请重新提供，或输入"跳过"暂时跳过此步骤。
+  ```
+
+- IF 用户选择跳过 → 标注 "⚠️ 内部文档暂未配置，后续分析问题时将跳过文档查询"
 
 ---
 
@@ -120,8 +140,8 @@ Gerrit 地址: https://whale-gerrit.zeasn.com/
 
 系统连接状态：
 ✅ Zmind — 已连接（API Key 有效）
-✅ Gerrit — 已配置（gerritpush 可用）
-✅ 内部文档 — 可访问
+✅ Gerrit — SSH 连接正常（gerrit version 3.6.0）
+✅ 内部文档 — Confluence API 可访问
 ⏸️ OpenGrok — 暂停（待开放后启用）
 
 项目-代码映射：
@@ -129,22 +149,31 @@ Gerrit 地址: https://whale-gerrit.zeasn.com/
 • stm-amlogic-t962d4-4k-1-5gb → ~/cvte_code/stm/
 
 你现在可以：
+• "查看我的待办" — 获取 Issue 列表
 • "帮我处理 PR #12345" — 全链路 PR/CR 处理
 • "分析下 #334001" — Bug 自动分析
 • "把 #332669 cp 到 mp" — Cherry-Pick 同步
-• "查看我的待办" — 获取 Issue 列表
+• "推送代码到 Gerrit" — gerritpush + 处理评论
 ```
 
 ---
 
 ## 关键约束
 
-- 引导流程必须**一次性完成所有配置**，不允许跳过步骤
+- 引导流程必须**一次性完成所有配置**，不允许跳过步骤（文档系统除外，可跳过）
 - 每个步骤验证失败时，必须提供明确的修复指引
 - 用户修复后可以说"已配置"或"重试"，AI 重新验证该步骤
 - 项目-代码映射可以只配常用的，但必须至少配一个
 - 配置总结必须展示所有系统的最终状态
-- 如果某个系统暂时不可用（如文档系统），标注状态但不阻塞后续使用
+- UI 提示统一使用"用户名"和"密码"，不暴露技术细节（如 HTTP Password、Basic Auth 等）
+- 不要在输出中暴露用户的密码或 API Key
+
+## 凭据存储说明
+
+各系统凭据的存储位置：
+- **Zmind API Key**: mcp.json 的 `env.ZMIND_API_KEY` 字段
+- **Gerrit 用户名**: 记录在 skill 上下文中，SSH 密钥由系统管理
+- **Confluence 用户名/密码**: 记录在 skill 上下文中，每次 API 调用时使用
 
 ## 后续补充配置
 
@@ -152,3 +181,4 @@ Gerrit 地址: https://whale-gerrit.zeasn.com/
 - 添加新的项目-代码映射
 - 更新 Reviewer 列表
 - 启用 OpenGrok（当服务开放后）
+- 更新 Confluence 密码
