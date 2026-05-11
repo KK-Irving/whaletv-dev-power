@@ -58,13 +58,117 @@ whaletv-dev-power/
 2. **Hook 拦截** — 自动阻断危险命令（sudo、根目录搜索、/tmp 写入、out/prebuilts 搜索）
 3. **人工确认** — 高风险操作等待用户授权（push 前、跨代码库操作前）
 
-## 快速开始
+## 安装与使用
 
-### 1. 配置 mcp.json（关键步骤）
+### Step 1：安装 Power
+
+1. 打开 Kiro IDE
+2. 点击左侧边栏的 **Powers** 图标（或通过命令面板搜索 "Powers"）
+3. 在 Powers 面板中点击 **"Add Power"** 按钮
+4. 选择 **"From GitHub URL"**
+5. 输入仓库地址：
+   ```
+   https://github.com/KK-Irving/whaletv-dev-power
+   ```
+6. 点击确认，等待安装完成
+
+安装成功后，Powers 面板中会出现 **whaletv-dev-power**。
+
+### Step 2：激活 Power
+
+1. 在 Powers 面板中找到 **whaletv-dev-power**
+2. 点击展开查看详情
+3. 点击 **"Try Power"** 按钮开始使用
+
+此时 AI 会自动进入首次配置引导流程。
+
+### Step 3：跟随引导完成配置
+
+Power 激活后会依次引导你完成以下配置（全程与 AI 对话交互）：
+
+#### 3.1 Zmind 连接配置
+
+AI 会检测 Zmind 连接状态。如果未配置，会引导你：
+- 获取 API 密钥（登录 https://zmind.whaletv.com → 我的账户 → API 访问密钥）
+- 将密钥配置到 `~/.kiro/settings/mcp.json` 的 `env.ZMIND_API_KEY` 字段
+
+你可以直接告诉 AI：
+> "我的 ZMIND_API_KEY 是 a1b2c3d4e5f6...，请帮我配置"
+
+#### 3.2 项目-代码路径匹配
+
+AI 会自动获取你在 Zmind 上的项目列表，然后请你提供项目与本地代码路径的对应关系。
+
+你可以这样告诉 AI：
+> "cultraview-dvb-amlogic-t950d4-2k-1g 对应 ~/cvte_code/amlogic/"
+> "stm-amlogic-t962d4-4k-1-5gb 对应 ~/cvte_code/stm/"
+
+这样后续分析 Issue 时，AI 能自动定位到正确的代码目录进行搜索。
+
+#### 3.3 Gerrit 连接验证
+
+AI 会确认你的 Gerrit 配置：
+- 是否能访问 https://whale-gerrit.zeasn.com/
+- `gerritpush` 命令是否可用
+- 默认 Reviewer 列表（可选）
+
+你可以告诉 AI：
+> "Gerrit 已配置好，gerritpush 可用"
+> "我的默认 Reviewer 是 zhangsan, lisi"
+
+#### 3.4 内部文档验证
+
+AI 会确认你是否能访问 https://docs.whaletv.com/
+
+你可以直接回复：
+> "文档系统可以正常访问"
+
+#### 3.5 配置完成
+
+所有系统验证通过后，AI 会展示配置总结：
+
+```
+🎉 配置完成！
+
+系统连接状态：
+✅ Zmind — 已连接
+✅ Gerrit — 已配置
+✅ 内部文档 — 可访问
+⏸️ OpenGrok — 暂停（待开放）
+
+项目-代码映射：
+• cultraview-dvb-amlogic-t950d4-2k-1g → ~/cvte_code/amlogic/
+• stm-amlogic-t962d4-4k-1-5gb → ~/cvte_code/stm/
+```
+
+### Step 4：开始正式使用
+
+配置完成后，你可以直接使用以下功能：
+
+| 你说的话 | AI 做的事 |
+|---------|----------|
+| "查看我的待办" | 获取你的 Issue 列表 |
+| "帮我处理 PR #12345" | 全链路 PR/CR 处理（9 步） |
+| "分析下 #334001" | Bug 自动分析（日志解析 + 代码定位） |
+| "把 #332669 cp 到 mp" | Cherry-Pick 同步到 MP 分支 |
+| "推送代码到 Gerrit" | gerritpush + 处理 Gerrit-AI 评论 |
+| "创建一个 Issue" | 在指定项目创建新 Issue |
+| "记录 2 小时工时到 #12345" | 记录工时 |
+
+### 后续补充配置
+
+随时可以对 AI 说：
+- "添加项目映射" — 补充新的项目-代码路径对应
+- "更新 Reviewer 列表" — 修改默认 Reviewer
+- "启用 OpenGrok" — 当 OpenGrok 服务开放后启用
+
+---
+
+## mcp.json 配置参考
 
 > ⚠️ **环境变量必须配置在 mcp.json 的 `env` 字段中**，仅设置系统环境变量不会生效。
 
-在 `~/.kiro/settings/mcp.json`（用户级）中添加：
+配置文件位置：`~/.kiro/settings/mcp.json`（用户级）
 
 ```json
 {
@@ -92,19 +196,7 @@ whaletv-dev-power/
 }
 ```
 
-### 2. 获取 Zmind API 密钥
-
-登录 https://zmind.whaletv.com → 右上角"我的账户" → 左侧"API 访问密钥" → 显示/重置密钥
-
-### 3. 安装依赖
-
-```bash
-cd mcp-servers/zmind-mcp-server && npm install
-```
-
-### 4. 使用
-
-在源码目录下启动 Kiro CLI，激活 Power 后即可使用。
+> 💡 **提示**：通常 Power 安装后 mcp.json 会自动生成基础配置，你只需要填入 `ZMIND_API_KEY` 即可。也可以在引导流程中直接告诉 AI 你的密钥，AI 会协助你完成配置。
 
 ## 外部系统集成
 

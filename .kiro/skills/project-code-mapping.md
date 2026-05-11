@@ -64,6 +64,6 @@ https://zmind.whaletv.com/projects/<project_identifier>
 
 ## 触发时机
 
-- 首次使用 Power 时，主动询问用户的项目-代码映射
+- 首次使用 Power 时，由 onboarding 引导流程的步骤 ② 触发
 - 处理 Issue 时发现项目未映射，提示用户补充
-- 用户主动要求配置项目映射时
+- 用户主动要求"补充配置"或"添加项目映射"时
