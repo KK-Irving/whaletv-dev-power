@@ -3,18 +3,16 @@
     "zmind-mcp-server": {
       "command": "npx",
       "args": ["-y", "@kk-irving/zmind-mcp-server"],
-      "env": {
-        "ZMIND_API_KEY": "${ZMIND_API_KEY}",
-        "ZMIND_URL": "${ZMIND_URL}"
-      }
+      "env": {},
+      "disabled": false,
+      "autoApprove": []
     },
     "opengrok-mcp-server": {
       "command": "npx",
       "args": ["-y", "@kk-irving/opengrok-mcp-server"],
-      "env": {
-        "OPENGROK_URL": "${OPENGROK_URL}",
-        "OPENGROK_PROJECT": "${OPENGROK_PROJECT}"
-      }
+      "env": {},
+      "disabled": false,
+      "autoApprove": []
     }
   }
 }
