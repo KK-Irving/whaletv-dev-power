@@ -7,7 +7,7 @@
 ## 前置条件
 
 - Zmind MCP Server 可用（`ZMIND_API_KEY` 已配置）
-- 当前目录为 AOSP 源码目录（包含 `.repo` 或典型子目录如 `frameworks/`、`packages/`）
+- 当前目录为源码目录（包含 `.repo` 或典型子目录如 `frameworks/`、`packages/`）
 
 ## 工作流步骤
 

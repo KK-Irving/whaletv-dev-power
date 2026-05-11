@@ -91,7 +91,7 @@ Hook 配置文件 `hooks/safety-hooks.json` 定义命令匹配模式和拦截动
 
 **block-sudo**：
 - 禁止以 `sudo` 开头的任何命令
-- AOSP 开发操作不需要 root 权限，使用 sudo 通常意味着操作方向有误
+- 开发操作不需要 root 权限，使用 sudo 通常意味着操作方向有误
 - 替代方案：使用当前用户权限操作，如需特殊权限请用户自行处理
 
 **block-root-search**：

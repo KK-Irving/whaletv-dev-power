@@ -1,21 +1,21 @@
 ---
 name: "whaletv-dev-power"
 displayName: "WhaleTV Developer Power"
-description: "面向 WhaleTV AOSP 开发者的 AI 辅助工具包，集成 Zmind 项目管理、OpenGrok 代码搜索和团队标准工作流"
-keywords: ["whaletv", "aosp", "zmind", "gerrit", "opengrok", "cherry-pick"]
+description: "面向 WhaleTV 开发者的 AI 辅助工具包，集成 Zmind 项目管理、OpenGrok 代码搜索和团队标准工作流"
+keywords: ["whaletv", "zmind", "gerrit", "opengrok", "cherry-pick"]
 author: "WhaleTV Team"
 ---
 
 # WhaleTV Developer Power
 
-面向 WhaleTV 全体 AOSP 开发者的 Kiro Power 工具包。集成 Zmind 项目管理、OpenGrok 代码搜索和团队标准工作流，使开发者在远程 Linux 服务器上通过 Kiro CLI 即可获得完整的 AI 辅助开发能力。
+面向 WhaleTV 全体开发者的 Kiro Power 工具包。集成 Zmind 项目管理、OpenGrok 代码搜索和团队标准工作流，使开发者在远程 Linux 服务器上通过 Kiro CLI 即可获得完整的 AI 辅助开发能力。
 
 ## Overview
 
 ### 功能概览
 
 - **Zmind 项目管理**：查询/创建/更新 Issue、工时记录、项目成员查询等工具
-- **OpenGrok 代码搜索**：全文搜索和符号定义查找，快速定位 AOSP 源码
+- **OpenGrok 代码搜索**：全文搜索和符号定义查找，快速定位源码
 - **PR/CR 工作流**：从获取 Issue 到推送 Gerrit 的全链路自动化
 - **Cherry-Pick 工作流**：跨代码库批量 CP 同步到 MP 分支
 - **Bug 分析工作流**：自动下载日志、解析异常、定位代码、生成报告
@@ -26,7 +26,7 @@ author: "WhaleTV Team"
 | 服务器 | 工具数 | 功能 |
 |--------|--------|------|
 | zmind-mcp-server | 14 | Issue 查询/创建/更新、工时记录、项目管理 |
-| opengrok-mcp-server | 2 | AOSP 源码全文搜索、符号定义查找 |
+| opengrok-mcp-server | 2 | 源码全文搜索、符号定义查找 |
 
 ## Available Steering Files
 
@@ -49,26 +49,50 @@ author: "WhaleTV Team"
 | Node.js | 18+ |
 | 运行环境 | CLI，无需 GUI |
 
-### 环境变量配置
+### mcp.json 配置（关键步骤）
+
+Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请在用户级配置文件 `~/.kiro/settings/mcp.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "zmind-mcp-server": {
+      "command": "npx",
+      "args": ["tsx", "src/index.ts"],
+      "cwd": "<power安装路径>/mcp-servers/zmind-mcp-server",
+      "env": {
+        "ZMIND_API_KEY": "你的40位API密钥",
+        "ZMIND_URL": "https://zmind.whaletv.com"
+      },
+      "disabled": false
+    },
+    "opengrok-mcp-server": {
+      "command": "npx",
+      "args": ["tsx", "src/index.ts"],
+      "cwd": "<power安装路径>/mcp-servers/opengrok-mcp-server",
+      "env": {
+        "OPENGROK_URL": "http://opengrok.zeasn.com:8080",
+        "OPENGROK_PROJECT": "d4_code"
+      },
+      "disabled": true
+    }
+  }
+}
+```
+
+> ⚠️ **注意**：
+> - `ZMIND_API_KEY` 必须配置在 mcp.json 的 `env` 字段中，仅设置系统环境变量不会生效
+> - OpenGrok 当前未全面开放，默认 `disabled: true`，后续开放后改为 `false` 即可启用
+> - 获取 API 密钥：登录 https://zmind.whaletv.com → 右上角"我的账户" → 左侧"API 访问密钥"
+
+### 环境变量说明
 
 | 变量名 | 用途 | 必需 | 默认值 |
 |--------|------|------|--------|
 | ZMIND_API_KEY | Zmind 用户 API 密钥 | ✅ 是 | 无 |
 | ZMIND_URL | Zmind 服务地址 | ❌ 否 | https://zmind.whaletv.com |
-| OPENGROK_URL | OpenGrok 服务地址 | ✅ 是 | 无 |
-| OPENGROK_PROJECT | 默认搜索项目名 | ❌ 否 | 无 |
-
-在 `~/.bashrc` 或 `~/.zshrc` 中添加：
-
-```bash
-export ZMIND_API_KEY="你的40位API密钥"
-export OPENGROK_URL="http://opengrok.zeasn.com:8080"
-# 可选
-export ZMIND_URL="https://zmind.whaletv.com"
-export OPENGROK_PROJECT="d4_code"
-```
-
-设置后执行 `source ~/.bashrc` 使配置生效。
+| OPENGROK_URL | OpenGrok 服务地址 | ⏸️ 暂停 | 无 |
+| OPENGROK_PROJECT | 默认搜索项目名 | ⏸️ 暂停 | 无 |
 
 ### 配置验证
 
@@ -89,7 +113,7 @@ node --version
 
 ### 推荐使用方式
 
-在 AOSP 源码根目录或子模块目录下启动 Kiro CLI：
+在源码根目录或子模块目录下启动 Kiro CLI：
 
 ```bash
 cd ~/cvte_code/amlogic && kiro
@@ -165,7 +189,7 @@ cd ~/cvte_code/amlogic && kiro
 ## Best Practices
 
 - 优先使用 `git grep` 搜索源码（~0.4s），仅在无结果时降级到 OpenGrok
-- 在 AOSP 源码根目录启动 Kiro CLI，确保 AI 可直接访问项目文件
+- 在源码根目录启动 Kiro CLI，确保 AI 可直接访问项目文件
 - 使用 `git add -p` 进行 hunk 级别精确暂存，避免提交无关改动
 - Commit Message 严格遵循格式：`[版本号][类型][whaletv][Zmind#ID]简述`
 - 跨代码库操作前明确告知用户当前操作范围

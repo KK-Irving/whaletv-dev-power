@@ -1,25 +1,16 @@
 # WhaleTV Developer Power
 
-面向 WhaleTV 全体 AOSP 开发者的 Kiro Power 工具包。集成 Zmind 项目管理、OpenGrok 代码搜索和团队标准工作流，使开发者在远程 Linux 服务器上通过 Kiro CLI 即可获得完整的 AI 辅助开发能力。
+面向 WhaleTV 全体开发者的 Kiro Power 工具包。集成 Zmind 项目管理、Gerrit 代码评审、内部文档查询和团队标准工作流，使开发者通过 Kiro CLI 即可获得完整的 AI 辅助开发能力。
 
 ## 项目结构
 
 ```
 whaletv-dev-power/
-├── POWER.md                              # Power 元数据与使用文档（Kiro 标准格式）
-├── mcp.json                              # MCP 服务器配置（Kiro 标准格式）
+├── POWER.md                              # Power 元数据与使用文档
 ├── README.md                             # 本文件
 ├── mcp-servers/
-│   ├── zmind-mcp-server/                 # Zmind (Redmine) MCP 服务器
-│   │   ├── package.json                  # npm: @kk-irving/zmind-mcp-server
-│   │   ├── tsconfig.json
-│   │   └── src/
-│   │       └── index.ts                  # 14 个工具实现
-│   └── opengrok-mcp-server/              # OpenGrok 代码搜索 MCP 服务器
-│       ├── package.json                  # npm: @kk-irving/opengrok-mcp-server
-│       ├── tsconfig.json
-│       └── src/
-│           └── index.ts                  # 2 个工具实现
+│   ├── zmind-mcp-server/                 # Zmind (Redmine) MCP 服务器（14 个工具）
+│   └── opengrok-mcp-server/              # OpenGrok 代码搜索（暂停，disabled）
 ├── steering/
 │   ├── pr-cr-workflow.md                 # PR/CR 处理工作流（9 步）
 │   ├── cherry-pick-workflow.md           # Cherry-Pick 同步工作流
@@ -28,47 +19,25 @@ whaletv-dev-power/
 │   ├── local-code-guide.md              # 本地源码操作指南
 │   └── safety-rules.md                  # 安全规则（三层防护）
 └── hooks/
-    └── safety-hooks.json                 # 命令拦截规则参考（4 条）
+    └── safety-hooks.json                 # 命令拦截规则（4 条）
 ```
-
-## npm 包
-
-MCP 服务器已发布到 npm 公共仓库，用户安装 Power 后自动通过 `npx -y` 拉取运行，无需手动安装依赖。
-
-| 包名 | 版本 | 说明 |
-|------|------|------|
-| [@kk-irving/zmind-mcp-server](https://www.npmjs.com/package/@kk-irving/zmind-mcp-server) | 1.0.0 | Zmind 项目管理（14 个工具） |
-| [@kk-irving/opengrok-mcp-server](https://www.npmjs.com/package/@kk-irving/opengrok-mcp-server) | 1.0.0 | OpenGrok 代码搜索（2 个工具） |
 
 ## 功能概览
 
 ### MCP 服务器
 
-| 服务器 | 工具数 | 功能 |
-|--------|--------|------|
-| zmind-mcp-server | 14 | Issue 查询/创建/更新、工时记录、项目管理 |
-| opengrok-mcp-server | 2 | AOSP 源码全文搜索、符号定义查找 |
+| 服务器 | 状态 | 工具数 | 功能 |
+|--------|------|--------|------|
+| zmind-mcp-server | ✅ 启用 | 14 | Issue 查询/创建/更新、工时记录、项目管理 |
+| opengrok-mcp-server | ⏸️ 暂停 | 2 | 源码全文搜索（待开放后启用） |
 
-**Zmind MCP Server 工具列表：**
-- `get_issue` — 获取 Issue 完整详情
-- `my_issues` — 获取我的 Issue 列表
-- `search_issues` — 按关键词搜索 Issue
-- `update_issue` — 更新 Issue 状态/指派/优先级
-- `create_issue` — 创建新 Issue
-- `add_comment` — 添加评论
-- `create_time_entry` — 记录工时
-- `list_projects` — 获取项目列表
-- `get_versions` — 获取项目版本列表
-- `get_project_members` — 获取项目成员
-- `get_issue_statuses` — 获取所有状态
-- `get_trackers` — 获取所有 Tracker 类型
-- `get_priorities` — 获取所有优先级
-- `get_time_activities` — 获取工时活动类型
-- `delete_issue` — 删除 Issue
+### Skills（自动生效）
 
-**OpenGrok MCP Server 工具列表：**
-- `search_code` — 全文关键词搜索
-- `search_symbol` — 符号定义位置搜索
+| Skill | 用途 |
+|-------|------|
+| project-code-mapping | 将 Zmind 项目与本地代码库路径匹配 |
+| gerrit-integration | Gerrit (whale-gerrit.zeasn.com) 交互规范 |
+| internal-docs | 内部文档 (docs.whaletv.com) 查询辅助 |
 
 ### Steering 工作流
 
@@ -89,68 +58,111 @@ MCP 服务器已发布到 npm 公共仓库，用户安装 Power 后自动通过 
 2. **Hook 拦截** — 自动阻断危险命令（sudo、根目录搜索、/tmp 写入、out/prebuilts 搜索）
 3. **人工确认** — 高风险操作等待用户授权（push 前、跨代码库操作前）
 
-## 环境要求
-
-| 项目 | 要求 |
-|------|------|
-| 操作系统 | Ubuntu 20.04+（远程 Linux 服务器） |
-| Node.js | 18+ |
-| 运行环境 | CLI，无需 GUI |
-
 ## 快速开始
 
-### 1. 配置环境变量
+### 1. 配置 mcp.json（关键步骤）
 
-```bash
-# 必需
-export ZMIND_API_KEY="你的40位API密钥"
-export OPENGROK_URL="http://opengrok.zeasn.com:8080"
+> ⚠️ **环境变量必须配置在 mcp.json 的 `env` 字段中**，仅设置系统环境变量不会生效。
 
-# 可选
-export ZMIND_URL="https://zmind.whaletv.com"       # 默认值
-export OPENGROK_PROJECT="d4_code"
+在 `~/.kiro/settings/mcp.json`（用户级）中添加：
+
+```json
+{
+  "mcpServers": {
+    "zmind-mcp-server": {
+      "command": "npx",
+      "args": ["tsx", "src/index.ts"],
+      "cwd": "<power安装路径>/mcp-servers/zmind-mcp-server",
+      "env": {
+        "ZMIND_API_KEY": "你的40位API密钥",
+        "ZMIND_URL": "https://zmind.whaletv.com"
+      },
+      "disabled": false
+    },
+    "opengrok-mcp-server": {
+      "command": "npx",
+      "args": ["tsx", "src/index.ts"],
+      "cwd": "<power安装路径>/mcp-servers/opengrok-mcp-server",
+      "env": {
+        "OPENGROK_URL": "http://opengrok.zeasn.com:8080"
+      },
+      "disabled": true
+    }
+  }
+}
 ```
 
-### 2. 安装 Power
+### 2. 获取 Zmind API 密钥
 
-**方式一：GitHub URL 安装（推荐）**
+登录 https://zmind.whaletv.com → 右上角"我的账户" → 左侧"API 访问密钥" → 显示/重置密钥
 
-1. 在 Kiro 中打开 Powers 面板
-2. 点击 "Add Custom Power" → "GitHub URL"
-3. 输入：`https://github.com/KK-Irving/whaletv-dev-power`
-4. 安装完成后 MCP Server 会通过 npm 自动拉取，无需手动安装依赖
-
-**方式二：本地目录安装（开发测试）**
-
-1. 克隆仓库：`git clone https://github.com/KK-Irving/whaletv-dev-power.git`
-2. 在 Kiro Powers 面板 → "Add Custom Power" → "Local Directory"
-3. 选择克隆后的目录路径
-
-### 3. 验证配置
+### 3. 安装依赖
 
 ```bash
-# 检查环境变量
-echo "ZMIND_API_KEY: ${ZMIND_API_KEY:+已设置}"
-echo "OPENGROK_URL: ${OPENGROK_URL:+已设置}"
-
-# 验证 Zmind 连接（应返回 200）
-curl -s -o /dev/null -w "%{http_code}" \
-  "${ZMIND_URL:-https://zmind.whaletv.com}/users/current.json?key=$ZMIND_API_KEY"
-
-# 验证 OpenGrok 连接（应返回 200）
-curl -s -o /dev/null -w "%{http_code}" \
-  "$OPENGROK_URL/api/v1/configuration"
+cd mcp-servers/zmind-mcp-server && npm install
 ```
 
 ### 4. 使用
 
-在 AOSP 源码目录下启动 Kiro CLI：
+在源码目录下启动 Kiro CLI，激活 Power 后即可使用。
 
-```bash
-cd ~/cvte_code/amlogic && kiro
+## 外部系统集成
+
+### Zmind 项目管理
+
+- **地址**: https://zmind.whaletv.com/
+- **功能**: Issue 查询/创建/更新、工时记录、项目成员查询
+- **项目链接格式**: `https://zmind.whaletv.com/projects/<identifier>`
+
+### Gerrit 代码评审
+
+- **地址**: https://whale-gerrit.zeasn.com/
+- **功能**: 代码推送、Change 查询、Cherry-Pick、评论处理
+- **推送命令**: `gerritpush`
+- **Change 链接格式**: `https://whale-gerrit.zeasn.com/c/<project>/+/<number>`
+
+### 内部文档
+
+- **地址**: https://docs.whaletv.com/
+- **功能**: 技术文档查询、已知问题检索、设计规范参考
+- **使用方式**: AI 在分析问题时会建议查阅相关文档
+
+### OpenGrok 代码搜索（暂停）
+
+- **地址**: http://opengrok.zeasn.com:8080
+- **状态**: 未全面开放，当前 disabled
+- **启用方式**: 在 mcp.json 中将 `disabled` 改为 `false`
+
+## 项目-代码匹配
+
+首次使用时，AI 会调用 `list_projects` 获取你的 Zmind 项目列表，然后请你提供项目与本地代码路径的映射关系：
+
+```
+Zmind 项目                                    → 本地代码路径
+cultraview-dvb-amlogic-t950d4-2k-1g          → ~/cvte_code/amlogic/
+stm-amlogic-t962d4-4k-1-5gb                  → ~/cvte_code/stm/
+...
 ```
 
-激活 Power 后即可使用所有工作流。
+映射建立后，处理 Issue 时 AI 会自动定位到正确的代码目录。
+
+## Zmind MCP Server 工具列表
+
+- `get_issue` — 获取 Issue 完整详情（含评论、附件、关联、子任务）
+- `my_issues` — 获取我的 Issue 列表
+- `search_issues` — 按关键词搜索 Issue
+- `update_issue` — 更新 Issue 状态/指派/优先级
+- `create_issue` — 创建新 Issue
+- `add_comment` — 添加评论
+- `create_time_entry` — 记录工时
+- `list_projects` — 获取项目列表
+- `get_versions` — 获取项目版本列表
+- `get_project_members` — 获取项目成员
+- `get_issue_statuses` — 获取所有状态
+- `get_trackers` — 获取所有 Tracker 类型
+- `get_priorities` — 获取所有优先级
+- `get_time_activities` — 获取工时活动类型
+- `delete_issue` — 删除 Issue
 
 ## 开发
 
@@ -161,36 +173,11 @@ cd mcp-servers/zmind-mcp-server && npx tsc --noEmit
 cd ../opengrok-mcp-server && npx tsc --noEmit
 ```
 
-### 本地运行 MCP Server
-
-```bash
-# Zmind
-cd mcp-servers/zmind-mcp-server
-ZMIND_API_KEY=your_key npx tsx src/index.ts
-
-# OpenGrok
-cd mcp-servers/opengrok-mcp-server
-OPENGROK_URL=http://your-server:8080 npx tsx src/index.ts
-```
-
 ### 使用 MCP Inspector 调试
 
 ```bash
 cd mcp-servers/zmind-mcp-server
 ZMIND_API_KEY=your_key npx @modelcontextprotocol/inspector npx tsx src/index.ts
-```
-
-### 发布新版本到 npm
-
-```bash
-# 更新版本号
-cd mcp-servers/zmind-mcp-server
-npm version patch  # 或 minor / major
-npm publish --access public
-
-cd ../opengrok-mcp-server
-npm version patch
-npm publish --access public
 ```
 
 ## 技术栈
@@ -200,19 +187,6 @@ npm publish --access public
 - **传输协议**: stdio
 - **参数校验**: zod 3.24.4
 - **HTTP 客户端**: Node.js 内置 fetch
-
-## Kiro Power 标准
-
-本项目遵循 Kiro Power 标准结构：
-
-- `POWER.md` — 使用标准 frontmatter（name, displayName, description, keywords, author）
-- `mcp.json` — 标准 MCP 服务器配置，通过 `npx -y @kk-irving/...` 从 npm 拉取运行
-- `steering/` — 按需加载的工作流指南
-
-## 已知问题
-
-- `@modelcontextprotocol/sdk` 1.12.1 在 TypeScript strict 模式下存在泛型递归过深问题（TS2589），已通过 `(server.tool as any)()` 绕过，不影响运行时行为
-- MCP Server 设计为在 Linux 服务器上运行，Windows 环境仅用于开发和编译验证
 
 ## 许可证
 

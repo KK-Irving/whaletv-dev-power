@@ -1,7 +1,7 @@
 {
   "name": "@kk-irving/opengrok-mcp-server",
   "version": "1.0.0",
-  "description": "OpenGrok AOSP Code Search MCP Server for WhaleTV Developer Power",
+  "description": "OpenGrok Code Search MCP Server for WhaleTV Developer Power",
   "type": "module",
   "bin": {
     "opengrok-mcp-server": "./dist/index.js"

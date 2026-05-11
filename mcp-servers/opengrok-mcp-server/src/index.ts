@@ -79,7 +79,7 @@ const server = new McpServer({ name: "opengrok", version: "1.0.0" });
 
 (server.tool as any)(
   "search_code",
-  "在 AOSP 源码中进行全文关键词搜索",
+  "在源码中进行全文关键词搜索",
   {
     query: z.string().min(1).max(200).describe("搜索关键词（1-200 字符）"),
     max_results: z.number().min(1).max(100).default(20).describe("最大返回条数"),

@@ -8,7 +8,7 @@
 
 - 代码已 commit（`git status` 显示 working tree clean 或仅有已暂存的变更已提交）
 - `gerritpush` 命令可用（已配置在系统 PATH 中）
-- 当前目录为 AOSP 源码目录（包含 `.repo` 或典型子目录如 `frameworks/`、`packages/`）
+- 当前目录为源码目录（包含 `.repo` 或典型子目录如 `frameworks/`、`packages/`）
 
 ## 工作流步骤
 
