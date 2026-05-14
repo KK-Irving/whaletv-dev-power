@@ -29,7 +29,7 @@ whaletv-dev-power/
 │   └── opengrok-mcp-server/              # OpenGrok 代码搜索（4 个工具）
 │       ├── package.json
 │       ├── tsconfig.json
-│       └── src/index.ts                  # 2 个工具实现
+│       └── src/index.ts                  # 4 个工具实现
 ├── steering/
 │   ├── onboarding.md                     # 首次配置引导流程
 │   ├── pr-cr-workflow.md                 # PR/CR 处理工作流（9 步）
@@ -41,7 +41,7 @@ whaletv-dev-power/
 ├── hooks/
 │   └── safety-hooks.json                 # 命令拦截规则（4 条）
 └── .kiro/
-    ├── skills/                           # AI 行为指导（8 个 auto-inclusion）
+    ├── skills/                           # AI 行为指导（9 个 auto-inclusion）
     │   ├── find-skill.md                 # 能力发现（自动匹配最优 skill）
     │   ├── skill-creator.md              # 能力创建（发现缺口时自动补齐）
     │   ├── self-improving.md             # 经验沉淀（错误/修正/最佳实践记录）
@@ -49,6 +49,7 @@ whaletv-dev-power/
     │   ├── code-review.md               # 代码自审（提交前质量检查）
     │   ├── project-code-mapping.md       # 项目-代码路径匹配
     │   ├── gerrit-integration.md         # Gerrit SSH 集成
+    │   ├── opengrok-integration.md       # OpenGrok 代码搜索集成
     │   └── internal-docs.md              # Confluence 文档查询
     ├── specs/                            # Spec 文档（需求/设计/任务/构建规范）
     └── .learnings/                       # 经验沉淀目录
@@ -62,16 +63,17 @@ whaletv-dev-power/
 | # | 能力模块 | 说明 |
 |---|---------|------|
 | 1 | **Zmind 项目管理** | 14 个 MCP 工具，覆盖 Issue 全生命周期管理 |
-| 2 | **PR/CR 全链路处理** | 9 步标准流程：获取 Issue → 修改代码 → 推送 Gerrit → 更新状态 |
-| 3 | **Cherry-Pick 同步** | 批量 CP 到 MP 分支，自动发现目标分支，分类汇报结果 |
-| 4 | **Bug 自动分析** | 日志解析 + 异常提取 + 代码定位 + 结构化报告 |
-| 5 | **Gerrit 集成** | SSH 查询提交记录、处理 Gerrit-AI 评论、gerritpush 推送 |
-| 6 | **内部文档查询** | Confluence CQL 搜索，自动关联已知问题和设计文档 |
-| 7 | **安全防护** | 三层体系：规则约束 + Hook 拦截 + 人工确认 |
-| 8 | **项目-代码匹配** | Zmind 项目自动映射到本地代码路径 |
-| 9 | **自我进化** | find-skill（能力发现）+ skill-creator（能力创建）+ self-improving（经验沉淀） |
-| 10 | **先设计再编码** | 复杂修改前自动触发方案探索，减少返工 |
-| 11 | **代码自审** | 提交前自动检查质量，减少 Gerrit-AI 评论轮次 |
+| 2 | **OpenGrok 代码搜索** | 4 个 MCP 工具，远程搜索公版代码（只读，辅助分析） |
+| 3 | **PR/CR 全链路处理** | 9 步标准流程：获取 Issue → 修改代码 → 推送 Gerrit → 更新状态 |
+| 4 | **Cherry-Pick 同步** | 批量 CP 到 MP 分支，自动发现目标分支，分类汇报结果 |
+| 5 | **Bug 自动分析** | 日志解析 + 异常提取 + 代码定位 + 结构化报告 |
+| 6 | **Gerrit 集成** | SSH 查询提交记录、处理 Gerrit-AI 评论、gerritpush 推送 |
+| 7 | **内部文档查询** | Confluence CQL 搜索，自动关联已知问题和设计文档 |
+| 8 | **安全防护** | 三层体系：规则约束 + Hook 拦截 + 人工确认 |
+| 9 | **项目-代码匹配** | Zmind 项目自动映射到本地代码路径 |
+| 10 | **自我进化** | find-skill（能力发现）+ skill-creator（能力创建）+ self-improving（经验沉淀） |
+| 11 | **先设计再编码** | 复杂修改前自动触发方案探索，减少返工 |
+| 12 | **代码自审** | 提交前自动检查质量，减少 Gerrit-AI 评论轮次 |
 
 ### Zmind MCP Server 工具列表（14 个）
 
@@ -91,6 +93,18 @@ whaletv-dev-power/
 | `get_trackers` | 获取所有 Tracker 类型 |
 | `get_priorities` | 获取所有优先级 |
 | `get_time_activities` | 获取工时活动类型 |
+
+### OpenGrok MCP Server 工具列表（4 个）
+
+| 工具 | 功能 |
+|------|------|
+| `search_code` | 全文关键词搜索（支持按项目过滤） |
+| `search_symbol` | 符号定义位置搜索（类/方法/变量） |
+| `search_path` | 按文件路径/文件名搜索 |
+| `get_file_content` | 获取文件完整源码内容（只读） |
+
+> 可用项目：`d4_code`、`stb16_code`、`x5_code`
+> 注意：仅包含公版代码，优先级低于本地代码搜索，需用户确认后才使用
 
 ### 安全机制
 
@@ -172,7 +186,18 @@ AI 会请你提供文档系统（docs.whaletv.com）的用户名和密码，然�
 
 > 注意：用户名区分大小写
 
-**3.5 配置完成**
+**3.5 OpenGrok 代码搜索配置**
+
+AI 会请你提供 OpenGrok（opengrok.zeasn.com）的用户名和密码，然后通过搜索 API 验证连通性。
+
+你可以这样告诉 AI：
+> "OpenGrok 的用户名是 xxx，密码是 xxx"
+
+验证通过后会展示可用的公版代码项目列表（d4_code、stb16_code、x5_code）。
+
+> 注意：OpenGrok 仅包含公版代码，优先级低于本地代码搜索
+
+**3.6 配置完成**
 
 所有系统验证通过后，AI 会展示配置总结，你就可以开始正式使用了。
 
@@ -240,7 +265,7 @@ AI 会请你提供文档系统（docs.whaletv.com）的用户名和密码，然�
          ▼              ▼              ▼            ▼
 ┌──────────┐  ┌──────────────┐  ┌─────────┐  ┌──────────┐
 │  Zmind   │  │   Gerrit     │  │  Docs   │  │ OpenGrok │
-│ (Redmine)│  │ (SSH:29418)  │  │(Confl.) │  │ (暂停)   │
+│ (Redmine)│  │ (SSH:29418)  │  │(Confl.) │  │(只读搜索)│
 └──────────┘  └──────────────┘  └─────────┘  └──────────┘
 ```
 
@@ -353,6 +378,7 @@ ZMIND_API_KEY=your_key npx tsx src/index.ts
 
 ### ✅ Phase 1（已完成）
 - [x] Zmind MCP Server（14 个工具）
+- [x] OpenGrok MCP Server（4 个工具：全文搜索、符号搜索、路径搜索、文件内容获取）
 - [x] PR/CR 全链路工作流（9 步）
 - [x] Cherry-Pick 同步工作流
 - [x] Bug 分析工作流
@@ -361,10 +387,10 @@ ZMIND_API_KEY=your_key npx tsx src/index.ts
 - [x] 安全防护三层体系
 - [x] 首次配置引导流程（onboarding）
 - [x] 项目-代码路径匹配
+- [x] 自我进化机制（find-skill + skill-creator + self-improving）
 
 ### 🔜 Phase 2（计划中）
 - [ ] Gerrit MCP Server（独立 MCP 服务器，支持 Cherry-Pick/评论等写操作）
-- [ ] OpenGrok 全面启用
 - [ ] 知识库集成（问题沉淀和检索）
 - [ ] 多代码库批量操作支持
 - [ ] Commit Message 智能生成（基于 diff 自动填充 what/why/how）
