@@ -130,7 +130,42 @@ Invoke-WebRequest -Uri "https://docs.whaletv.com/rest/api/content?limit=1" -Head
 
 ---
 
-### ⑤ 配置总结
+### ⑤ OpenGrok 代码搜索配置
+
+**AI 动作**: 获取用户的 OpenGrok 账号密码，然后通过搜索 API 实际验证连通性。
+
+**引导提示**:
+```
+接下来配置 OpenGrok 代码搜索。
+
+OpenGrok 地址: https://opengrok.zeasn.com
+用途：远程搜索公版代码（只读），当本地没有对应项目代码时使用
+
+请提供你的账号信息：
+- 用户名：
+- 密码：
+```
+
+**验证方式**: 用户提供凭据后，执行搜索 API 验证：
+```bash
+curl -s -u "<用户名>:<密码>" "https://opengrok.zeasn.com/api/v1/search?full=test&maxresults=1"
+```
+
+- IF 返回 JSON 搜索结果 → 显示 "✅ OpenGrok 连接正常"，并展示可用项目列表：
+  ```
+  ✅ OpenGrok 连接正常
+
+  可用项目（公版代码库）：
+  • d4_code — D4 平台
+  • stb16_code — STB16 平台
+  • x5_code — X5 平台
+  ```
+- IF 返回 401 → 提示认证失败，请重新提供
+- IF 用户选择跳过 → 标注 "⚠️ OpenGrok 暂未配置，远程代码搜索不可用"
+
+---
+
+### ⑥ 配置总结
 
 **AI 动作**: 汇总所有配置状态，展示最终结果。
 
@@ -142,7 +177,7 @@ Invoke-WebRequest -Uri "https://docs.whaletv.com/rest/api/content?limit=1" -Head
 ✅ Zmind — 已连接（API Key 有效）
 ✅ Gerrit — SSH 连接正常（gerrit version 3.6.0）
 ✅ 内部文档 — Confluence API 可访问
-⏸️ OpenGrok — 暂停（待开放后启用）
+✅ OpenGrok — 代码搜索可用（d4_code、stb16_code、x5_code）
 
 项目-代码映射：
 • cultraview-dvb-amlogic-t950d4-2k-1g → ~/cvte_code/amlogic/
@@ -174,6 +209,7 @@ Invoke-WebRequest -Uri "https://docs.whaletv.com/rest/api/content?limit=1" -Head
 
 各系统凭据的存储位置：
 - **Zmind API Key**: mcp.json 的 `env.ZMIND_API_KEY` 字段
+- **OpenGrok 用户名/密码**: mcp.json 的 `env.OPENGROK_USERNAME` 和 `env.OPENGROK_PASSWORD` 字段
 - **Gerrit 用户名**: 记录在 skill 上下文中，SSH 密钥由系统管理
 - **Confluence 用户名/密码**: 记录在 skill 上下文中，每次 API 调用时使用
 

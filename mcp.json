@@ -3,14 +3,22 @@
     "zmind-mcp-server": {
       "command": "npx",
       "args": ["-y", "@kk-irving/zmind-mcp-server"],
-      "env": {},
+      "env": {
+        "ZMIND_API_KEY": "",
+        "ZMIND_URL": "https://zmind.whaletv.com"
+      },
       "disabled": false,
       "autoApprove": []
     },
     "opengrok-mcp-server": {
       "command": "npx",
       "args": ["-y", "@kk-irving/opengrok-mcp-server"],
-      "env": {},
+      "env": {
+        "OPENGROK_URL": "https://opengrok.zeasn.com",
+        "OPENGROK_USERNAME": "",
+        "OPENGROK_PASSWORD": "",
+        "OPENGROK_PROJECT": ""
+      },
       "disabled": false,
       "autoApprove": []
     }

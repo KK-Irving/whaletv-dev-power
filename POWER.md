@@ -36,7 +36,7 @@ author: "WhaleTV Team"
 | 服务器 | 工具数 | 功能 |
 |--------|--------|------|
 | zmind-mcp-server | 14 | Issue 查询/创建/更新、工时记录、项目管理 |
-| opengrok-mcp-server | 2 | 源码全文搜索、符号定义查找 |
+| opengrok-mcp-server | 4 | 全文搜索、符号定义搜索、路径搜索、文件内容获取 |
 
 ## Available Steering Files
 
@@ -82,10 +82,12 @@ Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请
       "args": ["tsx", "src/index.ts"],
       "cwd": "<power安装路径>/mcp-servers/opengrok-mcp-server",
       "env": {
-        "OPENGROK_URL": "http://opengrok.zeasn.com:8080",
-        "OPENGROK_PROJECT": "d4_code"
+        "OPENGROK_URL": "https://opengrok.zeasn.com",
+        "OPENGROK_USERNAME": "你的OpenGrok用户名",
+        "OPENGROK_PASSWORD": "你的OpenGrok密码",
+        "OPENGROK_PROJECT": ""
       },
-      "disabled": true
+      "disabled": false
     }
   }
 }
@@ -93,8 +95,8 @@ Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请
 
 > ⚠️ **注意**：
 > - `ZMIND_API_KEY` 必须配置在 mcp.json 的 `env` 字段中，仅设置系统环境变量不会生效
-> - OpenGrok 当前未全面开放，默认 `disabled: true`，后续开放后改为 `false` 即可启用
-> - 获取 API 密钥：登录 https://zmind.whaletv.com → 右上角"我的账户" → 左侧"API 访问密钥"
+> - `OPENGROK_USERNAME` 和 `OPENGROK_PASSWORD` 同样需要配置在 mcp.json 的 `env` 字段中
+> - 获取 Zmind API 密钥：登录 https://zmind.whaletv.com → 右上角"我的账户" → 左侧"API 访问密钥"
 
 ### 环境变量说明
 
@@ -102,8 +104,10 @@ Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请
 |--------|------|------|--------|
 | ZMIND_API_KEY | Zmind 用户 API 密钥 | ✅ 是 | 无 |
 | ZMIND_URL | Zmind 服务地址 | ❌ 否 | https://zmind.whaletv.com |
-| OPENGROK_URL | OpenGrok 服务地址 | ⏸️ 暂停 | 无 |
-| OPENGROK_PROJECT | 默认搜索项目名 | ⏸️ 暂停 | 无 |
+| OPENGROK_URL | OpenGrok 服务地址 | ✅ 是 | 无 |
+| OPENGROK_USERNAME | OpenGrok 用户名 | ✅ 是 | 无 |
+| OPENGROK_PASSWORD | OpenGrok 密码 | ✅ 是 | 无 |
+| OPENGROK_PROJECT | 默认搜索项目名 | ❌ 否 | 无（搜索所有项目） |
 
 ### 配置验证
 
@@ -184,8 +188,10 @@ cd ~/cvte_code/amlogic && kiro
 
 ## OpenGrok MCP Server 工具列表
 
-- `search_code` — 全文关键词搜索
-- `search_symbol` — 符号定义位置搜索
+- `search_code` — 全文关键词搜索（支持按项目过滤）
+- `search_symbol` — 符号定义位置搜索（类/方法/变量）
+- `search_path` — 按文件路径/文件名搜索
+- `get_file_content` — 获取文件完整源码内容（只读）
 
 ## 安全机制
 
@@ -223,8 +229,8 @@ cd ~/cvte_code/amlogic && kiro
 
 **解决**：
 1. 确认变量已设置：`echo $OPENGROK_URL`
-2. 设置变量：`export OPENGROK_URL="http://opengrok.zeasn.com:8080"`
-3. 验证服务可达：`curl -s -o /dev/null -w "%{http_code}" "$OPENGROK_URL/api/v1/configuration"`
+2. 设置变量：`export OPENGROK_URL="https://opengrok.zeasn.com"`
+3. 验证服务可达：`curl -s -u "$OPENGROK_USERNAME:$OPENGROK_PASSWORD" "https://opengrok.zeasn.com/api/v1/search?full=test&maxresults=1"`
 
 ### MCP Server 连接失败
 
@@ -243,7 +249,7 @@ cd ~/cvte_code/amlogic && kiro
   - **获取方式**：登录 https://zmind.whaletv.com → 右上角"我的账户" → 左侧"API 访问密钥" → 显示/重置密钥
 
 - **`OPENGROK_URL`**：OpenGrok 服务地址
-  - **设置方式**：WhaleTV 内部 OpenGrok 地址为 `http://opengrok.zeasn.com:8080`
+  - **设置方式**：WhaleTV 内部 OpenGrok 地址为 `https://opengrok.zeasn.com`
 
 - **`ZMIND_URL`**（可选）：Zmind 服务地址，默认为 `https://zmind.whaletv.com`
 

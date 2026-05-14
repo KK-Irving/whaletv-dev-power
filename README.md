@@ -26,7 +26,7 @@ whaletv-dev-power/
 │   │   ├── package.json
 │   │   ├── tsconfig.json
 │   │   └── src/index.ts                  # 14 个工具实现
-│   └── opengrok-mcp-server/              # OpenGrok 代码搜索（暂停）
+│   └── opengrok-mcp-server/              # OpenGrok 代码搜索（4 个工具）
 │       ├── package.json
 │       ├── tsconfig.json
 │       └── src/index.ts                  # 2 个工具实现
@@ -223,7 +223,7 @@ AI 会请你提供文档系统（docs.whaletv.com）的用户名和密码，然�
 │                                                          │
 │  MCP Server 层:                                          │
 │  ├── zmind-mcp-server (14 tools) ──→ Zmind (Redmine)    │
-│  └── opengrok-mcp-server (暂停) ──→ OpenGrok            │
+│  └── opengrok-mcp-server (4 tools) ──→ OpenGrok           │
 │                                                          │
 │  Skill 层（SSH/HTTP 直接调用）:                            │
 │  ├── gerrit-integration ──→ Gerrit (SSH:29418)          │
@@ -249,7 +249,7 @@ AI 会请你提供文档系统（docs.whaletv.com）的用户名和密码，然�
 | Zmind | https://zmind.whaletv.com | API Key | API 密钥 |
 | Gerrit | https://whale-gerrit.zeasn.com | SSH 密钥 + HTTP 密码 | 用户名、密码 |
 | Confluence | https://docs.whaletv.com | HTTP Basic Auth | 用户名、密码 |
-| OpenGrok | http://opengrok.zeasn.com:8080 | 无 | ⏸️ 暂停 |
+| OpenGrok | https://opengrok.zeasn.com | HTTP Basic Auth | 用户名、密码 |
 
 ## mcp.json 配置参考
 
@@ -275,9 +275,11 @@ AI 会请你提供文档系统（docs.whaletv.com）的用户名和密码，然�
       "args": ["tsx", "src/index.ts"],
       "cwd": "<power安装路径>/mcp-servers/opengrok-mcp-server",
       "env": {
-        "OPENGROK_URL": "http://opengrok.zeasn.com:8080"
+        "OPENGROK_URL": "https://opengrok.zeasn.com",
+        "OPENGROK_USERNAME": "你的OpenGrok用户名",
+        "OPENGROK_PASSWORD": "你的OpenGrok密码"
       },
-      "disabled": true
+      "disabled": false
     }
   }
 }
@@ -328,7 +330,7 @@ ZMIND_API_KEY=your_key npx tsx src/index.ts
 ┌─────────────────────────────────────────────────────┐
 │  whaletv-dev-power (本项目)                           │
 │  ├── zmind-mcp-server (14 tools) ← FAE Power 调用   │
-│  ├── opengrok-mcp-server (暂停) ← FAE Power 调用    │
+│  ├── opengrok-mcp-server (4 tools) ← FAE Power 调用    │
 │  └── steering/ (PR/CR/Cherry-Pick — 开发者用)        │
 └─────────────────────────────────────────────────────┘
          ↑ 提供 MCP 工具能力
