@@ -2,7 +2,7 @@
 name: "whaletv-dev-power"
 displayName: "WhaleTV Developer Power"
 description: "面向 WhaleTV 开发者的 AI 辅助工具包，集成 Zmind 项目管理、OpenGrok 代码搜索和团队标准工作流"
-keywords: ["whaletv", "zmind", "gerrit", "opengrok", "cherry-pick"]
+keywords: ["whaletv", "zmind", "gerrit", "opengrok", "cherry-pick", "pr", "cr", "android", "项目管理", "代码搜索"]
 author: "WhaleTV Team"
 ---
 
@@ -48,6 +48,7 @@ author: "WhaleTV Team"
 - **gerrit-workflow** — Gerrit 推送与评论处理，触发示例："推送代码到 Gerrit"
 - **local-code-guide** — 本地源码操作规范（搜索策略、目录结构），自动生效
 - **safety-rules** — 安全规则与三层防护体系，自动生效
+- **onboarding** — 首次配置引导流程（Zmind → 项目映射 → Gerrit → 文档系统），触发示例："配置" / "setup"
 
 ## Onboarding
 

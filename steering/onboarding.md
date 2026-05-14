@@ -154,6 +154,7 @@ Invoke-WebRequest -Uri "https://docs.whaletv.com/rest/api/content?limit=1" -Head
 • "分析下 #334001" — Bug 自动分析
 • "把 #332669 cp 到 mp" — Cherry-Pick 同步
 • "推送代码到 Gerrit" — gerritpush + 处理评论
+• "回顾经验" — 查看历史经验和错误记录
 ```
 
 ---
@@ -167,6 +168,7 @@ Invoke-WebRequest -Uri "https://docs.whaletv.com/rest/api/content?limit=1" -Head
 - 配置总结必须展示所有系统的最终状态
 - UI 提示统一使用"用户名"和"密码"，不暴露技术细节（如 HTTP Password、Basic Auth 等）
 - 不要在输出中暴露用户的密码或 API Key
+- 配置过程中的失败和解决方案记录到 `.learnings/ERRORS.md`，便于后续用户遇到相同问题时快速解决
 
 ## 凭据存储说明
 

@@ -41,11 +41,20 @@ whaletv-dev-power/
 ├── hooks/
 │   └── safety-hooks.json                 # 命令拦截规则（4 条）
 └── .kiro/
-    ├── skills/                           # AI 行为指导
+    ├── skills/                           # AI 行为指导（8 个 auto-inclusion）
+    │   ├── find-skill.md                 # 能力发现（自动匹配最优 skill）
+    │   ├── skill-creator.md              # 能力创建（发现缺口时自动补齐）
+    │   ├── self-improving.md             # 经验沉淀（错误/修正/最佳实践记录）
+    │   ├── brainstorming.md              # 先设计再编码（方案探索）
+    │   ├── code-review.md               # 代码自审（提交前质量检查）
     │   ├── project-code-mapping.md       # 项目-代码路径匹配
     │   ├── gerrit-integration.md         # Gerrit SSH 集成
     │   └── internal-docs.md              # Confluence 文档查询
-    └── specs/                            # Spec 文档（需求/设计/任务）
+    ├── specs/                            # Spec 文档（需求/设计/任务/构建规范）
+    └── .learnings/                       # 经验沉淀目录
+        ├── LEARNINGS.md                  # 修正/洞察/最佳实践
+        ├── ERRORS.md                     # 错误记录
+        └── FEATURE_REQUESTS.md           # 功能请求
 ```
 
 ## 核心能力
@@ -60,6 +69,9 @@ whaletv-dev-power/
 | 6 | **内部文档查询** | Confluence CQL 搜索，自动关联已知问题和设计文档 |
 | 7 | **安全防护** | 三层体系：规则约束 + Hook 拦截 + 人工确认 |
 | 8 | **项目-代码匹配** | Zmind 项目自动映射到本地代码路径 |
+| 9 | **自我进化** | find-skill（能力发现）+ skill-creator（能力创建）+ self-improving（经验沉淀） |
+| 10 | **先设计再编码** | 复杂修改前自动触发方案探索，减少返工 |
+| 11 | **代码自审** | 提交前自动检查质量，减少 Gerrit-AI 评论轮次 |
 
 ### Zmind MCP Server 工具列表（14 个）
 

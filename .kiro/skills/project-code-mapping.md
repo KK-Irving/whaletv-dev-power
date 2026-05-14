@@ -6,7 +6,7 @@ inclusion: auto
 
 ## 目的
 
-将 Zmind 项目（project identifier）与本地 AOSP 代码库路径进行匹配，使 AI 在处理 Issue 时能自动定位到正确的代码目录。
+将 Zmind 项目（project identifier）与本地代码库路径进行匹配，使 AI 在处理 Issue 时能自动定位到正确的代码目录。
 
 ## Zmind 项目地址格式
 
@@ -60,7 +60,7 @@ https://zmind.whaletv.com/projects/<project_identifier>
 - 不要假设项目和代码路径的对应关系，必须由用户明确指定
 - 如果 Issue 所属项目没有对应的代码路径映射，提示用户提供
 - 一个 Zmind 项目可能对应多个代码库子目录
-- 代码路径可能是 AOSP 源码根目录，也可能是某个子模块目录
+- 代码路径可能是源码根目录，也可能是某个子模块目录
 
 ## 触发时机
 
