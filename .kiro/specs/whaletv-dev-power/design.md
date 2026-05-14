@@ -118,7 +118,6 @@ interface ZmindConfig {
 async function redmineGet(path: string, params?: Record<string, string>): Promise<any>;
 async function redminePut(path: string, body: any): Promise<number>;
 async function redminePost(path: string, body: any): Promise<any>;
-async function redmineDelete(path: string): Promise<number>;
 ```
 
 **工具清单**：
@@ -139,7 +138,6 @@ async function redmineDelete(path: string): Promise<number>;
 | `get_trackers` | 查询 | 无 | 所有 Tracker 类型及 ID |
 | `get_priorities` | 查询 | 无 | 所有优先级及 ID |
 | `get_time_activities` | 查询 | 无 | 工时活动类型列表 |
-| `delete_issue` | 写入 | issue_id: number | 删除确认 |
 
 **错误处理策略**：
 

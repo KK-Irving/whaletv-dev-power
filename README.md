@@ -39,7 +39,7 @@ whaletv-dev-power/
 │   ├── local-code-guide.md              # 本地源码操作指南
 │   └── safety-rules.md                  # 安全规则（三层防护）
 ├── hooks/
-│   └── safety-hooks.json                 # 命令拦截规则（4 条）
+│   └── safety-hooks.json                 # 命令拦截规则（6 条）
 └── .kiro/
     ├── skills/                           # AI 行为指导（9 个 auto-inclusion）
     │   ├── find-skill.md                 # 能力发现（自动匹配最优 skill）
@@ -111,7 +111,7 @@ whaletv-dev-power/
 | 层级 | 机制 | 示例 |
 |------|------|------|
 | 第一层 | 规则约束 | MP 分支禁止自动推送、git add 必须用 -p |
-| 第二层 | Hook 拦截 | 禁止 sudo、禁止搜索 out/prebuilts 目录 |
+| 第二层 | Hook 拦截 | 禁止 sudo、禁止搜索 out/prebuilts、禁止 git add 全量暂存 |
 | 第三层 | 人工确认 | push 前展示 commit 信息等待确认 |
 
 ## 安装
@@ -287,8 +287,7 @@ AI 会请你提供 OpenGrok（opengrok.zeasn.com）的用户名和密码，然�
   "mcpServers": {
     "zmind-mcp-server": {
       "command": "npx",
-      "args": ["tsx", "src/index.ts"],
-      "cwd": "<power安装路径>/mcp-servers/zmind-mcp-server",
+      "args": ["-y", "@kk-irving/zmind-mcp-server@latest"],
       "env": {
         "ZMIND_API_KEY": "你的40位API密钥",
         "ZMIND_URL": "https://zmind.whaletv.com"
@@ -297,8 +296,7 @@ AI 会请你提供 OpenGrok（opengrok.zeasn.com）的用户名和密码，然�
     },
     "opengrok-mcp-server": {
       "command": "npx",
-      "args": ["tsx", "src/index.ts"],
-      "cwd": "<power安装路径>/mcp-servers/opengrok-mcp-server",
+      "args": ["-y", "@kk-irving/opengrok-mcp-server@latest"],
       "env": {
         "OPENGROK_URL": "https://opengrok.zeasn.com",
         "OPENGROK_USERNAME": "你的OpenGrok用户名",
@@ -310,7 +308,7 @@ AI 会请你提供 OpenGrok（opengrok.zeasn.com）的用户名和密码，然�
 }
 ```
 
-> 💡 通常 Power 安装后 mcp.json 会自动生成基础配置，你只需要填入 `ZMIND_API_KEY` 即可。也可以在引导流程中直接告诉 AI 你的密钥。
+> 💡 使用 `@latest` 标签确保每次启动时自动检查并获取最新版本，无需手动更新。通常 Power 安装后 mcp.json 会自动生成基础配置，你只需要填入 `ZMIND_API_KEY` 即可。也可以在引导流程中直接告诉 AI 你的密钥。
 
 ## 开发
 

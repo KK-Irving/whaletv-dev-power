@@ -66,20 +66,6 @@ async function redminePost(path: string, body: any): Promise<any> {
   return res.json();
 }
 
-async function redmineDelete(path: string): Promise<number> {
-  validateConfig();
-  const url = new URL(path, BASE_URL);
-  url.searchParams.set("key", API_KEY);
-  const res = await fetch(url.toString(), {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-  });
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`Zmind API 错误 (HTTP ${res.status}): ${errorText}`);
-  }
-  return res.status;
-}
 
 // === 格式化辅助函数 ===
 function formatIssue(data: any): string {
@@ -159,7 +145,7 @@ function formatIssueList(data: any): string {
 }
 
 // === Server 实例化 ===
-const server = new McpServer({ name: "zmind-mcp-server", version: "1.0.0" });
+const server = new McpServer({ name: "zmind-mcp-server", version: "1.1.0" });
 
 // === 查询工具 ===
 
@@ -539,22 +525,6 @@ const server = new McpServer({ name: "zmind-mcp-server", version: "1.0.0" });
         .map((a: any) => `${a.id}: ${a.name}`)
         .join("\n");
       return { content: [{ type: "text", text }] };
-    } catch (err: any) {
-      return { content: [{ type: "text", text: `错误: ${err.message}` }], isError: true };
-    }
-  }
-);
-
-(server.tool as any)(
-  "delete_issue",
-  "删除指定 Issue（不可恢复，请谨慎操作）",
-  {
-    issue_id: z.number().describe("要删除的 Issue ID"),
-  },
-  async ({ issue_id }) => {
-    try {
-      await redmineDelete(`/issues/${issue_id}.json`);
-      return { content: [{ type: "text", text: `✅ Issue #${issue_id} 已删除` }] };
     } catch (err: any) {
       return { content: [{ type: "text", text: `错误: ${err.message}` }], isError: true };
     }

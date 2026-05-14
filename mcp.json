@@ -2,7 +2,7 @@
   "mcpServers": {
     "zmind-mcp-server": {
       "command": "npx",
-      "args": ["-y", "@kk-irving/zmind-mcp-server"],
+      "args": ["-y", "@kk-irving/zmind-mcp-server@latest"],
       "env": {
         "ZMIND_API_KEY": "",
         "ZMIND_URL": "https://zmind.whaletv.com"
@@ -12,7 +12,7 @@
     },
     "opengrok-mcp-server": {
       "command": "npx",
-      "args": ["-y", "@kk-irving/opengrok-mcp-server"],
+      "args": ["-y", "@kk-irving/opengrok-mcp-server@latest"],
       "env": {
         "OPENGROK_URL": "https://opengrok.zeasn.com",
         "OPENGROK_USERNAME": "",

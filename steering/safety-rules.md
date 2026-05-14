@@ -86,6 +86,8 @@ Hook 配置文件 `hooks/safety-hooks.json` 定义命令匹配模式和拦截动
 | `block-root-search` | 禁止根目录/家目录搜索 | `(find\|grep)\s+(/\|~/)` | 禁止在根目录（/）或家目录（~）执行大范围搜索，避免性能问题 | 指定具体的源码子目录进行搜索 |
 | `block-tmp-write` | 禁止写入 /tmp | `>\s*/tmp/\|>>/tmp/` | 禁止写入 /tmp 路径，避免临时文件丢失或权限冲突 | 使用 ~/tmp 目录替代 /tmp |
 | `block-out-search` | 禁止搜索编译输出目录 | `(find\|grep\|ls\s+-R)\s+.*(out/\|prebuilts/)` | out/ 和 prebuilts/ 目录体积巨大（数十 GB），搜索会导致严重性能问题 | 使用 `git grep` 搜索源码，或指定具体的 src 子目录 |
+| `block-git-add-all` | 禁止 git add 全量暂存 | `git\s+add\s+(-A\|--all\|\.\|\*)` | 禁止全量暂存，避免将无关变更混入提交 | 使用 `git add -p` 进行 hunk 级别的精确暂存 |
+| `block-bulk-copy-out` | 禁止大范围复制/同步编译输出目录 | `(rsync\|cp\s+-r)\s+.*(out/\|prebuilts/)` | out/ 和 prebuilts/ 目录体积巨大，批量复制会导致磁盘和性能问题 | 指定具体的目标子目录进行操作 |
 
 ### 各规则说明
 
@@ -108,6 +110,16 @@ Hook 配置文件 `hooks/safety-hooks.json` 定义命令匹配模式和拦截动
 - 禁止对 `out/` 或 `prebuilts/` 目录执行 `find`、`grep` 或 `ls -R` 命令
 - `out/` 是编译输出目录（通常 50GB+），`prebuilts/` 是预编译工具链目录（通常 30GB+）
 - 替代方案：使用 `git grep` 搜索源码（自动排除这些目录），或指定具体的源码子目录
+
+**block-git-add-all**：
+- 禁止使用 `git add .`、`git add -A`、`git add --all`、`git add *` 等全量暂存命令
+- 全量暂存可能将无关变更（调试代码、临时修改、其他 Issue 的改动）混入提交
+- 替代方案：使用 `git add -p` 逐 hunk 选择要暂存的变更
+
+**block-bulk-copy-out**：
+- 禁止对 `out/` 或 `prebuilts/` 目录执行 `rsync` 或 `cp -r` 命令
+- 这些目录体积巨大，批量复制会消耗大量磁盘空间和时间
+- 替代方案：指定具体的目标子目录进行操作
 
 ---
 

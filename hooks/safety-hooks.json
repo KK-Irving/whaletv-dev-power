@@ -39,6 +39,26 @@
       "action": "block",
       "reason": "out/ 和 prebuilts/ 目录体积巨大，搜索会导致性能问题",
       "alternative": "请使用 git grep 搜索源码，或指定具体的 src 子目录"
+    },
+    {
+      "id": "block-git-add-all",
+      "name": "禁止 git add 全量暂存",
+      "eventType": "preToolUse",
+      "toolTypes": "shell",
+      "pattern": "git\\s+add\\s+(-A|--all|\\.|\\*)",
+      "action": "block",
+      "reason": "禁止全量暂存，避免将无关变更混入提交",
+      "alternative": "请使用 git add -p 进行 hunk 级别的精确暂存"
+    },
+    {
+      "id": "block-bulk-copy-out",
+      "name": "禁止大范围复制/同步编译输出目录",
+      "eventType": "preToolUse",
+      "toolTypes": "shell",
+      "pattern": "(rsync|cp\\s+-r)\\s+.*(out/|prebuilts/)",
+      "action": "block",
+      "reason": "out/ 和 prebuilts/ 目录体积巨大，批量复制会导致磁盘和性能问题",
+      "alternative": "请指定具体的目标子目录进行操作"
     }
   ]
 }

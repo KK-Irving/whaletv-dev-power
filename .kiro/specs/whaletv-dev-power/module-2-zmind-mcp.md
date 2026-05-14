@@ -34,7 +34,6 @@ function validateConfig(): void { ... }
 async function redmineGet(path, params?): Promise<any> { ... }
 async function redminePut(path, body): Promise<number> { ... }
 async function redminePost(path, body): Promise<any> { ... }
-async function redmineDelete(path): Promise<number> { ... }
 
 // 5. 格式化辅助函数
 function formatIssue(issue): string { ... }
@@ -61,8 +60,6 @@ server.tool("get_issue_statuses", ...);
 server.tool("get_trackers", ...);
 server.tool("get_priorities", ...);
 server.tool("get_time_activities", ...);
-// 7d. 删除工具
-server.tool("delete_issue", ...);
 
 // 8. 启动
 async function main() { ... }

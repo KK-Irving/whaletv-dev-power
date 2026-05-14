@@ -69,8 +69,7 @@ Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请
   "mcpServers": {
     "zmind-mcp-server": {
       "command": "npx",
-      "args": ["tsx", "src/index.ts"],
-      "cwd": "<power安装路径>/mcp-servers/zmind-mcp-server",
+      "args": ["-y", "@kk-irving/zmind-mcp-server@latest"],
       "env": {
         "ZMIND_API_KEY": "你的40位API密钥",
         "ZMIND_URL": "https://zmind.whaletv.com"
@@ -79,8 +78,7 @@ Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请
     },
     "opengrok-mcp-server": {
       "command": "npx",
-      "args": ["tsx", "src/index.ts"],
-      "cwd": "<power安装路径>/mcp-servers/opengrok-mcp-server",
+      "args": ["-y", "@kk-irving/opengrok-mcp-server@latest"],
       "env": {
         "OPENGROK_URL": "https://opengrok.zeasn.com",
         "OPENGROK_USERNAME": "你的OpenGrok用户名",
@@ -94,6 +92,7 @@ Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请
 ```
 
 > ⚠️ **注意**：
+> - 使用 `@latest` 标签确保每次启动时自动获取最新版本
 > - `ZMIND_API_KEY` 必须配置在 mcp.json 的 `env` 字段中，仅设置系统环境变量不会生效
 > - `OPENGROK_USERNAME` 和 `OPENGROK_PASSWORD` 同样需要配置在 mcp.json 的 `env` 字段中
 > - 获取 Zmind API 密钥：登录 https://zmind.whaletv.com → 右上角"我的账户" → 左侧"API 访问密钥"
@@ -184,7 +183,6 @@ cd ~/cvte_code/amlogic && kiro
 - `get_trackers` — 获取所有 Tracker 类型
 - `get_priorities` — 获取所有优先级
 - `get_time_activities` — 获取工时活动类型
-- `delete_issue` — 删除 Issue
 
 ## OpenGrok MCP Server 工具列表
 
@@ -238,7 +236,7 @@ cd ~/cvte_code/amlogic && kiro
 
 **解决**：
 1. 确认 Node.js 版本 >= 18：`node --version`
-2. 手动测试 MCP Server 是否可运行：`npx -y @kk-irving/zmind-mcp-server`
+2. 手动测试 MCP Server 是否可运行：`npx -y @kk-irving/zmind-mcp-server@latest`
 3. 如果报网络错误，确认 npm registry 可达：`npm ping`
 
 ## MCP Config Placeholders

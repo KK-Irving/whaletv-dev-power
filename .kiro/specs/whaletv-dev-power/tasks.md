@@ -32,7 +32,7 @@ This implementation plan builds the `whaletv-dev-power` Kiro Power in 5 modules:
     - In `mcp-servers/zmind-mcp-server/src/index.ts`, implement:
     - Environment variable reading: `ZMIND_URL` (default `https://zmind.whaletv.com`), `ZMIND_API_KEY` (required)
     - `validateConfig()` function that throws error with specific variable name if `ZMIND_API_KEY` is empty/undefined
-    - HTTP helper functions: `redmineGet(path, params?)`, `redminePut(path, body)`, `redminePost(path, body)`, `redmineDelete(path)` — all with error handling that catches non-success status codes and returns formatted error messages including HTTP status code and API error description
+    - HTTP helper functions: `redmineGet(path, params?)`, `redminePut(path, body)`, `redminePost(path, body)` — all with error handling that catches non-success status codes and returns formatted error messages including HTTP status code and API error description
     - McpServer instantiation with name "zmind-mcp-server", version "1.0.0"
     - StdioServerTransport connection and main() entry point
     - _Requirements: 2.9, 2.10, 2.11_
@@ -59,7 +59,6 @@ This implementation plan builds the `whaletv-dev-power` Kiro Power in 5 modules:
     - `get_trackers`: no params, calls GET `/trackers.json`, returns all tracker types with IDs
     - `get_priorities`: no params, calls GET `/enumerations/issue_priorities.json`, returns all priorities with IDs
     - `get_time_activities`: no params, calls GET `/enumerations/time_entry_activities.json`, returns activity types
-    - `delete_issue`: accepts `issue_id` (number), calls DELETE `/issues/{id}.json`, returns confirmation
     - _Requirements: 2.8_
 
   - [ ]* 3.5 Write unit tests for Zmind MCP Server

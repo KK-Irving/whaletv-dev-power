@@ -125,10 +125,10 @@ function formatSearchResults(data: any, type: string): string {
     output += `📄 ${filePath}\n`;
     const matchList = matches as any[];
     for (const match of matchList) {
-      const line = (match.line || "").replace(/<\/?b>/g, ""); // 去掉 HTML 加粗标签
+      const line = match.line || "";
       const lineNum = match.lineNumber || "";
       const tag = match.tag ? ` [${match.tag}]` : "";
-      output += `  L${lineNum}${tag}: ${line.trim()}\n`;
+      output += `  L${lineNum}${tag}: ${line.replace(/<\/?b>/g, "").trimEnd()}\n`;
     }
     output += "\n";
   }
@@ -137,7 +137,7 @@ function formatSearchResults(data: any, type: string): string {
 }
 
 // === Server 实例化 ===
-const server = new McpServer({ name: "opengrok-mcp-server", version: "1.1.0" });
+const server = new McpServer({ name: "opengrok-mcp-server", version: "1.2.0" });
 
 // === 工具注册 ===
 
