@@ -35,7 +35,7 @@ author: "WhaleTV Team"
 
 | 服务器 | 工具数 | 功能 |
 |--------|--------|------|
-| zmind-mcp-server | 14 | Issue 查询/创建/更新、工时记录、项目管理 |
+| zmind-mcp-server | 15 | Issue 查询/创建/更新、附件下载、工时记录、项目管理 |
 | opengrok-mcp-server | 4 | 全文搜索、符号定义搜索、路径搜索、文件内容获取 |
 
 ## Available Steering Files
@@ -127,7 +127,10 @@ node --version
 
 ### 推荐使用方式
 
-在源码根目录或子模块目录下启动 Kiro CLI：
+> ⚠️ **Workspace 限制**：Kiro 只能操作当前 workspace 内的文件。源码目录必须作为 workspace 打开，否则本地代码搜索不可用（会降级到 OpenGrok）。
+
+- **Windows（Samba 映射）**：在 Kiro 中 File → Open Folder → 选择源码映射路径（如 `W:\code\950_stm\amlogic`）
+- **Linux（远程服务器）**：在源码根目录下启动 Kiro CLI：
 
 ```bash
 cd ~/cvte_code/amlogic && kiro
@@ -183,6 +186,7 @@ cd ~/cvte_code/amlogic && kiro
 - `get_trackers` — 获取所有 Tracker 类型
 - `get_priorities` — 获取所有优先级
 - `get_time_activities` — 获取工时活动类型
+- `download_attachment` — 下载 Issue 附件内容（日志/文本直接读取，二进制返回元信息）
 
 ## OpenGrok MCP Server 工具列表
 

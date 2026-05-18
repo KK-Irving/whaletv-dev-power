@@ -20,9 +20,11 @@ inclusion: auto
 | 配置项 | UI 显示 | 说明 |
 |--------|---------|------|
 | Gerrit 用户名 | 用户名 | 登录 Gerrit 的用户名 |
-| Gerrit HTTP 密码 | 密码 | Settings → HTTP Credentials 生成（用于 REST API 写操作） |
+| Gerrit HTTP 密码 | 密码 | Settings → HTTP Credentials → Generate Password（用于 REST API 写操作） |
 
-> SSH 认证依赖用户本机的 SSH 密钥（需已上传到 Gerrit Settings → SSH Keys）
+> SSH 查询依赖用户名 + SSH 密钥（需已上传到 Gerrit Settings → SSH Keys）
+> HTTP 密码用于 Cherry-Pick、评论等写操作
+> 两者在 onboarding 阶段一次性收集完毕
 
 ## 连接验证
 

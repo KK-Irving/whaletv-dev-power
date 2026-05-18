@@ -25,7 +25,7 @@ whaletv-dev-power/
 │   ├── zmind-mcp-server/                 # Zmind (Redmine) MCP 服务器
 │   │   ├── package.json
 │   │   ├── tsconfig.json
-│   │   └── src/index.ts                  # 14 个工具实现
+│   │   └── src/index.ts                  # 15 个工具实现
 │   └── opengrok-mcp-server/              # OpenGrok 代码搜索（4 个工具）
 │       ├── package.json
 │       ├── tsconfig.json
@@ -62,7 +62,7 @@ whaletv-dev-power/
 
 | # | 能力模块 | 说明 |
 |---|---------|------|
-| 1 | **Zmind 项目管理** | 14 个 MCP 工具，覆盖 Issue 全生命周期管理 |
+| 1 | **Zmind 项目管理** | 15 个 MCP 工具，覆盖 Issue 全生命周期管理 + 附件下载 |
 | 2 | **OpenGrok 代码搜索** | 4 个 MCP 工具，远程搜索公版代码（只读，辅助分析） |
 | 3 | **PR/CR 全链路处理** | 9 步标准流程：获取 Issue → 修改代码 → 推送 Gerrit → 更新状态 |
 | 4 | **Cherry-Pick 同步** | 批量 CP 到 MP 分支，自动发现目标分支，分类汇报结果 |
@@ -75,7 +75,7 @@ whaletv-dev-power/
 | 11 | **先设计再编码** | 复杂修改前自动触发方案探索，减少返工 |
 | 12 | **代码自审** | 提交前自动检查质量，减少 Gerrit-AI 评论轮次 |
 
-### Zmind MCP Server 工具列表（14 个）
+### Zmind MCP Server 工具列表（15 个）
 
 | 工具 | 功能 |
 |------|------|
@@ -86,6 +86,7 @@ whaletv-dev-power/
 | `create_issue` | 创建新 Issue |
 | `add_comment` | 添加评论（支持私密评论） |
 | `create_time_entry` | 记录工时 |
+| `download_attachment` | 下载 Issue 附件（日志/文本直接读取，二进制返回元信息） |
 | `list_projects` | 获取项目列表 |
 | `get_versions` | 获取项目版本列表 |
 | `get_project_members` | 获取项目成员及角色 |
@@ -205,7 +206,154 @@ AI 会请你提供 OpenGrok（opengrok.zeasn.com）的用户名和密码，然�
 
 配置完成后，直接用自然语言触发各种功能。
 
+---
+
+### CLI 模式使用（Linux 远程服务器）🔜 Phase 2
+
+> ⚠️ **此功能计划在 Phase 2 实现**，当前仅支持 Kiro IDE 模式。以下内容为预研方案，尚未完整验证。
+
+<details>
+<summary>展开查看 CLI 预研方案（Phase 2）</summary>
+
+如果你在远程 Linux 服务器上使用 Kiro CLI（`kiro-cli`），以下是预期的安装和使用流程。
+
+#### CLI 安装 Power
+
+Kiro CLI 支持两种使用方式：**Agent 模式（推荐）** 和手动配置模式。
+
+**方式 A：Agent 模式（推荐）**
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/KK-Irving/whaletv-dev-power.git ~/whaletv-dev-power
+
+# 2. 复制 agent 配置到 Kiro agents 目录
+cp ~/whaletv-dev-power/agent/whaletv-dev.json ~/.kiro/agents/whaletv-dev.json
+
+# 3. 编辑配置，填入你的凭据
+vi ~/.kiro/agents/whaletv-dev.json
+# 填入 ZMIND_API_KEY、OPENGROK_USERNAME、OPENGROK_PASSWORD
+
+# 4. 验证 agent 已注册
+kiro-cli agent list
+# 应显示: whaletv-dev
+
+# 5. 设为默认 agent（可选）
+kiro-cli agent set-default whaletv-dev
+```
+
+**方式 B：手动配置 MCP**
+
+```bash
+# 1. 配置 MCP 服务器（编辑用户级 mcp.json）
+mkdir -p ~/.kiro/settings
+cat > ~/.kiro/settings/mcp.json << 'EOF'
+{
+  "mcpServers": {
+    "zmind-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@kk-irving/zmind-mcp-server@latest"],
+      "env": {
+        "ZMIND_API_KEY": "你的40位API密钥",
+        "ZMIND_URL": "https://zmind.whaletv.com"
+      },
+      "disabled": false
+    },
+    "opengrok-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@kk-irving/opengrok-mcp-server@latest"],
+      "env": {
+        "OPENGROK_URL": "https://opengrok.zeasn.com",
+        "OPENGROK_USERNAME": "你的用户名",
+        "OPENGROK_PASSWORD": "你的密码"
+      },
+      "disabled": false
+    }
+  }
+}
+EOF
+
+# 2. 验证 MCP 服务器可用
+kiro-cli mcp
+```
+
+#### CLI 启动和交互
+
+```bash
+# 在源码目录下启动对话（重要：这决定了 workspace 范围）
+cd ~/cvte_code/amlogic
+
+# 使用 whaletv-dev agent 启动（推荐）
+kiro-cli chat --agent whaletv-dev
+
+# 或如果已设为默认 agent，直接启动
+kiro-cli chat
+
+# 使用 TUI 模式（更好的终端交互体验）
+kiro-cli chat --agent whaletv-dev --tui
+
+# 对话中直接输入自然语言：
+> 分析下 #337301
+> 帮我处理 PR #12345
+> 把 #332669 cp 到 mp
+```
+
+#### CLI 常用命令
+
+| 命令 | 用途 |
+|------|------|
+| `kiro-cli chat` | 启动 AI 对话（经典模式） |
+| `kiro-cli chat --tui` | 启动 AI 对话（TUI 模式） |
+| `kiro-cli mcp` | 管理 MCP 服务器 |
+| `kiro-cli doctor` | 诊断常见问题 |
+| `kiro-cli translate "查看我的待办"` | 自然语言转 Shell 命令 |
+
+#### CLI 与 IDE 的区别
+
+| 对比项 | Kiro IDE | Kiro CLI |
+|--------|----------|----------|
+| Workspace | 手动 Open Folder | 启动 `kiro-cli chat` 时的 `pwd` 目录 |
+| 添加代码目录 | File → Add Folder to Workspace | `cd` 到目标目录后重新启动 |
+| Power 安装 | Powers 面板 → Add Power | 手动克隆仓库 + 配置 mcp.json |
+| MCP 配置 | Power 自动生成 | 手动编辑 `~/.kiro/settings/mcp.json` |
+| 交互方式 | 图形化对话窗口 | 终端文本交互 / TUI |
+| 适用场景 | Windows/Mac 本地开发 | Linux 远程服务器 |
+
+#### CLI 切换项目
+
+当需要分析不同项目的 Issue 时，在对应的源码目录下启动：
+
+```bash
+# 分析 Amlogic 项目的 Issue
+cd ~/cvte_code/amlogic && kiro-cli chat
+
+# 分析 STM 项目的 Issue
+cd ~/cvte_code/stm && kiro-cli chat
+```
+
+#### 已知限制（Phase 2 待解决）
+
+- CLI Agent 模式下无法自动加载 Power 的 steering 和 skills 文件
+- Agent JSON 的 `prompt` 字段长度有限，无法包含所有工作流细节
+- `resources` 字段的文件引用能力待验证
+
+</details>
+
 ## 使用方式
+
+### ⚠️ Workspace 要求（重要）
+
+Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作为 workspace 打开，否则 `git grep` 等本地代码搜索无法工作。
+
+- **Windows（Samba 映射）**：在 Kiro 中 File → Open Folder → 选择源码映射路径（如 `W:\code\950_stm\amlogic`）
+- **Linux（远程服务器）**：在源码根目录下启动 Kiro CLI（如 `cd ~/cvte_code/amlogic && kiro`）
+
+**如果分析问题时代码不在当前 workspace 中**：
+- AI 会提示你执行 `File → Add Folder to Workspace → 选择源码路径`
+- 你回复"已添加"后，AI 会继续使用本地代码搜索
+- 你回复"跳过"则降级到 OpenGrok 远程搜索（公版代码，可能与实际项目有差异）
+
+### 自然语言触发
 
 安装配置完成后，在 Kiro 对话中直接使用自然语言触发：
 
@@ -247,7 +395,7 @@ AI 会请你提供 OpenGrok（opengrok.zeasn.com）的用户名和密码，然�
 │  whaletv-dev-power (本项目)                               │
 │                                                          │
 │  MCP Server 层:                                          │
-│  ├── zmind-mcp-server (14 tools) ──→ Zmind (Redmine)    │
+│  ├── zmind-mcp-server (15 tools) ──→ Zmind (Redmine)    │
 │  └── opengrok-mcp-server (4 tools) ──→ OpenGrok           │
 │                                                          │
 │  Skill 层（SSH/HTTP 直接调用）:                            │
@@ -352,7 +500,7 @@ ZMIND_API_KEY=your_key npx tsx src/index.ts
 ```
 ┌─────────────────────────────────────────────────────┐
 │  whaletv-dev-power (本项目)                           │
-│  ├── zmind-mcp-server (14 tools) ← FAE Power 调用   │
+│  ├── zmind-mcp-server (15 tools) ← FAE Power 调用   │
 │  ├── opengrok-mcp-server (4 tools) ← FAE Power 调用    │
 │  └── steering/ (PR/CR/Cherry-Pick — 开发者用)        │
 └─────────────────────────────────────────────────────┘
@@ -375,7 +523,7 @@ ZMIND_API_KEY=your_key npx tsx src/index.ts
 ## Roadmap
 
 ### ✅ Phase 1（已完成）
-- [x] Zmind MCP Server（14 个工具）
+- [x] Zmind MCP Server（15 个工具）
 - [x] OpenGrok MCP Server（4 个工具：全文搜索、符号搜索、路径搜索、文件内容获取）
 - [x] PR/CR 全链路工作流（9 步）
 - [x] Cherry-Pick 同步工作流
@@ -388,6 +536,7 @@ ZMIND_API_KEY=your_key npx tsx src/index.ts
 - [x] 自我进化机制（find-skill + skill-creator + self-improving）
 
 ### 🔜 Phase 2（计划中）
+- [ ] **Kiro CLI Agent 支持**（`kiro-cli chat --agent whaletv-dev`，完整 steering/skills 加载）
 - [ ] Gerrit MCP Server（独立 MCP 服务器，支持 Cherry-Pick/评论等写操作）
 - [ ] 知识库集成（问题沉淀和检索）
 - [ ] 多代码库批量操作支持

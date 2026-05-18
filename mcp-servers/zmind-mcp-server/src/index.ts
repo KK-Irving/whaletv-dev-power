@@ -145,7 +145,7 @@ function formatIssueList(data: any): string {
 }
 
 // === Server 实例化 ===
-const server = new McpServer({ name: "zmind-mcp-server", version: "1.1.0" });
+const server = new McpServer({ name: "zmind-mcp-server", version: "1.2.0" });
 
 // === 查询工具 ===
 
@@ -527,6 +527,84 @@ const server = new McpServer({ name: "zmind-mcp-server", version: "1.1.0" });
       return { content: [{ type: "text", text }] };
     } catch (err: any) {
       return { content: [{ type: "text", text: `错误: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+// === 附件工具 ===
+
+(server.tool as any)(
+  "download_attachment",
+  "下载 Zmind Issue 的附件内容（支持日志、文本文件等）。对于二进制文件（图片、视频、压缩包）仅返回文件元信息。",
+  {
+    attachment_url: z.string().describe("附件下载 URL（从 get_issue 返回的 attachments 中获取 content_url）"),
+    filename: z.string().optional().describe("附件文件名（用于判断文件类型）"),
+  },
+  async ({ attachment_url, filename }: { attachment_url: string; filename?: string }) => {
+    try {
+      validateConfig();
+
+      // 判断文件类型
+      const name = filename || attachment_url.split("/").pop() || "unknown";
+      const ext = name.split(".").pop()?.toLowerCase() || "";
+      const textExtensions = ["log", "txt", "xml", "json", "csv", "conf", "cfg", "prop", "properties", "ini", "sh", "py", "java", "kt", "c", "h", "cpp", "md"];
+      const compressedExtensions = ["gz", "zip", "tar", "bz2", "7z", "rar"];
+      const binaryExtensions = ["png", "jpg", "jpeg", "gif", "bmp", "mp4", "avi", "mov", "mkv", "apk", "so", "bin", "img", "pdf", "doc", "docx", "xls", "xlsx"];
+
+      const isText = textExtensions.includes(ext);
+      const isCompressed = compressedExtensions.includes(ext);
+      const isBinary = binaryExtensions.includes(ext);
+
+      // 构建带认证的 URL
+      const url = new URL(attachment_url);
+      url.searchParams.set("key", API_KEY);
+
+      const res = await fetch(url.toString());
+      if (!res.ok) {
+        throw new Error(`下载附件失败 (HTTP ${res.status}): ${name}`);
+      }
+
+      if (isText) {
+        // 文本文件：直接返回内容
+        const content = await res.text();
+        const truncated = content.length > 100000
+          ? content.substring(0, 100000) + "\n\n... [文件过大，已截断，共 " + content.length + " 字符]"
+          : content;
+        return { content: [{ type: "text", text: `📄 ${name}\n\n${truncated}` }] };
+      } else if (isCompressed || isBinary) {
+        // 二进制/压缩文件：返回元信息
+        const size = res.headers.get("content-length") || "未知";
+        const sizeKB = size !== "未知" ? `${(parseInt(size) / 1024).toFixed(1)} KB` : "未知";
+        let typeLabel = isBinary ? "二进制文件" : "压缩包";
+        let hint = isBinary
+          ? "此文件为二进制格式，无法直接读取内容。如需查看，请用户手动下载。"
+          : "此文件为压缩包，无法直接读取内容。建议用户手动下载解压后提供日志文件。";
+
+        return {
+          content: [{
+            type: "text",
+            text: `📦 ${name}\n- 类型: ${typeLabel}\n- 大小: ${sizeKB}\n- 下载链接: ${attachment_url}\n\n${hint}`,
+          }],
+        };
+      } else {
+        // 未知类型：尝试作为文本读取
+        const content = await res.text();
+        if (content.length > 0 && !content.includes("\x00")) {
+          const truncated = content.length > 100000
+            ? content.substring(0, 100000) + "\n\n... [文件过大，已截断]"
+            : content;
+          return { content: [{ type: "text", text: `📄 ${name}\n\n${truncated}` }] };
+        } else {
+          return {
+            content: [{
+              type: "text",
+              text: `📦 ${name}\n- 类型: 未知二进制文件\n- 下载链接: ${attachment_url}\n\n无法读取内容，请用户手动下载查看。`,
+            }],
+          };
+        }
+      }
+    } catch (err: any) {
+      return { content: [{ type: "text", text: `下载附件失败: ${err.message}` }], isError: true };
     }
   }
 );

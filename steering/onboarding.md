@@ -67,8 +67,10 @@ inclusion: auto
 
 请提供你的 Gerrit 账号信息：
 - 用户名：（登录 https://whale-gerrit.zeasn.com/ 的用户名）
-- 密码：（Gerrit Settings → HTTP Credentials 中生成的 HTTP 密码）
+- HTTP 密码：（Gerrit Settings → HTTP Credentials → Generate Password）
 ```
+
+> 说明：用户名 + SSH 密钥用于查询提交记录，HTTP 密码用于 Cherry-Pick、评论等写操作。一次性配好，后续使用时无需再次提供。
 
 **验证方式**: 用户提供用户名后，执行 SSH 验证：
 ```bash
@@ -76,7 +78,24 @@ ssh -p 29418 <用户名>@whale-gerrit.zeasn.com gerrit version
 ```
 
 - IF 返回版本信息（如 `gerrit version 3.6.0`）→ 显示 "✅ Gerrit 连接正常"
-- IF 连接失败 → 引导用户配置 SSH 密钥：
+- IF 连接失败 → 执行网络诊断后引导用户修复：
+
+**网络诊断步骤**（连接失败时自动执行）：
+```bash
+# 1. 检查 DNS 解析
+nslookup whale-gerrit.zeasn.com
+
+# 2. 检查 SSH 端口连通性
+nc -zv whale-gerrit.zeasn.com 29418 -w 5
+
+# 3. 检查是否需要代理
+echo $http_proxy $https_proxy
+```
+
+根据诊断结果给出针对性建议：
+- DNS 解析失败 → "请检查 DNS 配置或 /etc/hosts 是否有 whale-gerrit.zeasn.com 的记录"
+- 端口不通 → "SSH 端口 29418 被防火墙拦截，请联系网络管理员开放，或确认是否需要配置代理"
+- DNS 和端口都通但 SSH 认证失败 → 引导配置 SSH 密钥：
   ```
   ❌ Gerrit SSH 连接失败
   
@@ -125,6 +144,23 @@ Invoke-WebRequest -Uri "https://docs.whaletv.com/rest/api/content?limit=1" -Head
   
   请重新提供，或输入"跳过"暂时跳过此步骤。
   ```
+
+- IF 连接超时或无法访问 → 执行网络诊断：
+  ```bash
+  # 检查 DNS 解析
+  nslookup docs.whaletv.com
+  
+  # 检查 HTTPS 端口连通性
+  nc -zv docs.whaletv.com 443 -w 5
+  
+  # 检查代理配置
+  echo $http_proxy $https_proxy
+  ```
+  
+  根据诊断结果给出建议：
+  - DNS 不通 → "请检查 DNS 配置，或在 /etc/hosts 中添加 docs.whaletv.com 的 IP 映射"
+  - 端口不通 → "HTTPS 端口被拦截，请确认是否需要配置代理。如果浏览器能访问但终端不行，可能需要设置 http_proxy 环境变量"
+  - 端口通但请求失败 → "可能是 SSL 证书问题或代理拦截，请尝试：`curl -k https://docs.whaletv.com`"
 
 - IF 用户选择跳过 → 标注 "⚠️ 内部文档暂未配置，后续分析问题时将跳过文档查询"
 
