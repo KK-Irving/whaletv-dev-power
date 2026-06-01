@@ -2,7 +2,31 @@
 inclusion: auto
 ---
 
-# Skill: Gerrit 集成
+# Skill: Gerrit 集成 ⚠️ Deprecated（2026-06）
+
+> ## ⚠️ 本 Skill 已不是首选 Gerrit 通道
+>
+> 自 2026-06 起，与 Gerrit 的所有交互（查询 / cherry-pick / push / 评论 / reviewer）首选使用
+> **`gerrit-mcp-server`**（12 个 MCP 工具，详见 `POWER.md` 与 `steering/gerrit-workflow.md`）。
+>
+> | 旧（本 Skill 描述） | 新（gerrit-mcp-server 工具） |
+> |---|---|
+> | `ssh -p 29418 ... gerrit query "#<id>"` | `search_changes(query: "Zmind#<id>")` 或 `query_change(change_id)` |
+> | `ssh -p 29418 ... gerrit version`（连接验证） | `curl -u "$GERRIT_USERNAME:$GERRIT_HTTP_PASSWORD" "$GERRIT_URL/a/accounts/self"` |
+> | `gerritpush` | `push_to_gerrit(cwd, target_branch, reviewers?, wip?, topic?)` |
+> | 手工浏览器查 Gerrit Change 评论 | `get_change_comments(change_id)`（按时间升序） |
+> | 手工查 cherry-pick 历史 / 手动 cherry-pick | `cherry_pick_change(change_id, destination_branch)`（三态：success / skipped_already_merged / conflict） |
+>
+> **本 Skill 仅在以下兜底场景仍有参考价值**：
+> - `gerrit-mcp-server` 暂未在你的环境启用 / 配置不完整
+> - 排查 MCP 工具异常时需要直连 Gerrit SSH 做 sanity check
+> - 写脚本批量操作时不便走 stdio MCP 协议
+>
+> **以下原内容保留为历史参考**，新流程请加载 `gerrit-workflow` / `pr-cr-workflow` / `cherry-pick-workflow` / `commit-message-workflow` 四份 steering。
+
+---
+
+# Skill: Gerrit 集成（历史 SSH 通道，仅作 fallback 参考）
 
 ## 目的
 
@@ -129,13 +153,18 @@ https://whale-gerrit.zeasn.com/q/%2523<issue_id>
 
 ## 本地推送命令
 
-```bash
-# 标准推送（自动添加 Reviewer）
-gerritpush
+> ⚠️ **新流程优先使用 MCP 工具 `push_to_gerrit`**（详见 `gerrit-workflow.md` / `pr-cr-workflow.md`）。
+> 以下命令仅作为 MCP 工具不可用时的 fallback 参考。
 
-# 手动推送
+```bash
+# fallback 1：手动 git push（与 push_to_gerrit 内部行为等价）
 git push origin HEAD:refs/for/<branch_name>
+
+# fallback 2：携带 reviewer 与 topic
+git push origin HEAD:refs/for/<branch_name>%r=alice@example.com,r=bob@example.com,topic=<topic>
 ```
+
+> 历史命令 `gerritpush`（外部 shell wrapper）已废弃，**不要在新流程中使用**。
 
 ## 与 Zmind 的关联
 

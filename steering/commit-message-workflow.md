@@ -23,7 +23,7 @@
 - ④ 字段生成算法（what / why / how / test / impact）
 - ⑤ 元数据补全规则（版本号 / 类型 / Zmind#ID / 简述）
 - ⑥ format / parse round-trip 契约
-- ⑦ 用户确认点
+- ⑦ 用户确认点（🔴 CHECKPOINT，强制人审）
 - ⑧ 端到端 10 步工作流
 - ⑨ 与 Zmind 附件分析的衔接
 - ⑩ 错误恢复
@@ -388,7 +388,29 @@ parse(format(m)) ≡ m  （按字段值逐一相等）
 
 ---
 
-## ⑦ 用户确认点
+## 🔴 ⑦ 用户确认点（CHECKPOINT）
+
+> **STOP**：本节是强制人审检查点。Developer 没有给出确认词集合内的回复前，AI 不得调用 `git commit` 或 `push_to_gerrit`。
+
+### AI 行为边界（CAN / CANNOT）
+
+**AI CAN do**：
+
+- 把生成的完整 commit message echo 给 Developer，并附上"目标分支 / source 来源 / Reviewer 列表"三件套
+- 当 Branch_Detector 输出 `ASK_DEVELOPER` 时，列出 5 级降级链每一级的失败原因（让 Developer 知道 AI 已经穷尽自动路径）
+- 提议 `target_version` 的候选（来自 Issue 的 `fixed_version`）但仅作建议，不直接采用
+- 在 Developer 拒绝并给出修改诉求后，**单字段重新生成**并重新展示完整 commit message
+- 在 Developer 长时间未响应时，保持暂停状态等待，不自动继续
+
+**AI CANNOT do**：
+
+- 不经 Developer 确认就调用 `git commit` 或 `push_to_gerrit`
+- 在 commit message subject 里使用 `]` 字符（破坏 parse round-trip，违反 Property 16）
+- 把 `target_version` 留空或填 `<TBD>`/`unknown`/`master` 凑数（必须显式触发 `ASK_DEVELOPER`）
+- 把未经 `git add -p` 的文件捎带提交（违反第二层 Hook 的 `block-git-add-all` 规则）
+- 把 `tracker.name` 不是 `Bug` / `Feature` 的 Issue 默认归为 `bugfix`（必须询问 Developer 在 4 个合法值中选）
+- 跳过本节直接进入步骤 ⑨ 推送（即使 Developer 在历史会话里说过"以后都不用确认了"也不行）
+- 在 Developer 给出非确认词回复（如 `no`、`否`、模糊回复）时，**默认按确认处理**
 
 ### 展示规则
 
@@ -407,7 +429,7 @@ AI 在生成完整 commit message 后，**必须**完整展示给 Developer，�
 目标分支：os10  （来源：upstream）
 Reviewer：alice@example.com, bob@example.com
 
-请确认是否推送（confirm/yes/y/ok/确认/继续）
+🛑 请确认是否推送（confirm/yes/y/ok/确认/继续）
 ```
 
 ### 确认词集合
@@ -587,3 +609,25 @@ Reviewer：alice@example.com, bob@example.com
 - **经验沉淀**：成功生成的 commit message 中体现的修复模式记录到 `.learnings/LEARNINGS.md`（分类 `insight`）
 - **能力缺口**：IF 多次出现同一类字段无法生成，THEN 记录到 `.learnings/FEATURE_REQUESTS.md` 并建议优化字段算法
 - **流程优化**：IF Developer 反复修改某字段，THEN 检查字段算法是否需要调整
+
+---
+
+## Don't 黑名单（团队踩坑沉淀）
+
+> 该清单是真实踩过的坑的逆向编码，每一条对应一个曾经把流程跑歪的反模式。**每次 commit message 生成前必须自检本节**。
+
+| # | 反模式 | 真实后果 | 替代做法 |
+|---|---|---|---|
+| 1 | **没等 Branch_Detector 输出就调 `push_to_gerrit`** | 推到错分支（如把 master 的 fix 误推到 os10_3_mp）后再来 abandon，白白污染 Gerrit | 章节 ③ 走完五级降级，拿到 `BranchDetectionResult.target_branch` 才进入步骤 ⑨ |
+| 2 | **把 `target_version` 留空，自己脑补 `master` 或 commit 历史第一个版本号** | 提测时 QA 拿不到对应版本，回归打不到点；后期审计追责到 commit 作者 | 章节 ⑤ 三级降级 → 全空时返回 `ASK_DEVELOPER`，**询问 Developer，不脑补** |
+| 3 | **`tracker.name="Bug"` 但写成 `feature`（或反过来）** | Zmind 统计与发版报告口径错乱；hotfix 列表漏掉真 bug | 类型映射严格按 Property 18：`Bug→bugfix`、`Feature→feature`，其他询问 Developer |
+| 4 | **subject 里出现 `]` 字符**（如 `修复扫频[空列表]问题`） | 触发 first-line 正则失败，Property 16 round-trip 崩；后续解析工具拿不到 subject | subject 改为 `修复扫频空列表问题`；如需引用括号请用全角 `［］` |
+| 5 | **subject 超过 50 字符直接截断**（如 `修复扫频后频道列表为空... `） | 截断处可能在标点中间，可读性受损；下次解析时长度对不上 | Property 19：超长**重写更短的表述**，不截断 |
+| 6 | **绕过 `git add -p`，用 `git add .` 把调试日志/临时文件一起提交** | 同事 review 时看到一堆 println、TODO、本地实验代码，CR 退回 | 第二层 Hook `block-git-add-all` 会硬拦；按章节 ⑧ 步骤 ⑥ 走 hunk 级暂存 |
+| 7 | **MP 分支检测到了，但只口头警告 Developer 没等二次确认就 push** | MP 分支多发版本被污染，触发回滚流程，影响多个版本线 | `is_mp_branch=true` 时**两道**确认：Branch_Detector 警告确认 + push 前再次确认 |
+| 8 | **任一字段生成失败时，用 `<TBD>` 或空字符串占位继续展示给 Developer** | Developer 误以为 AI 已生成完毕直接确认，把占位符提进 Gerrit | 章节 ⑩：任一字段失败**不进入** Developer 确认状态，先终止补全 |
+| 9 | **把 Issue `description` 整段塞进 `[why]` 不做摘要** | `[why]` 字段超 500 字符；commit log 一屏读不完；信息密度反而下降 | `[why]` ≤ 500 字符，提取核心现象 + 根因，引用 Issue ID 让 reviewer 自查详情 |
+| 10 | **Developer 回复 `差不多吧` / `应该可以` / `就这样` 当作确认词处理** | 出问题时双方对责任归属各执一词（Developer 没明确同意 vs AI 默认通过） | 严格用确认词集合 `{confirm, yes, y, ok, 确认, 继续}`；模糊回复一律视为未确认 |
+
+**触发场景**：每次准备执行步骤 ⑦ 字段汇总前，AI 内部对照本表一次。任一反模式命中 → 修方案后再展示给 Developer。
+

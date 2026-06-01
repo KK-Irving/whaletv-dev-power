@@ -59,7 +59,7 @@ inclusion: auto
 
 ### ③ Gerrit 连接验证
 
-**AI 动作**: 获取用户的 Gerrit 用户名，然后通过 SSH 实际验证连通性。
+**AI 动作**: 分两步验证 Gerrit 连接 —— 先验 REST（gerrit-mcp-server 主通道），再验 SSH（push_to_gerrit 工具内部仍走 git push + SSH，因此 SSH 公钥仍是必要前提）。
 
 **引导提示**:
 ```
@@ -70,34 +70,56 @@ inclusion: auto
 - HTTP 密码：（Gerrit Settings → HTTP Credentials → Generate Password）
 ```
 
-> 说明：用户名 + SSH 密钥用于查询提交记录，HTTP 密码用于 Cherry-Pick、评论等写操作。一次性配好，后续使用时无需再次提供。
+> 说明：HTTP 密码用于 gerrit-mcp-server 的 12 个工具（query / cherry-pick / 评论 / reviewer / set_review_label）；SSH 公钥用于 push_to_gerrit 内部的 git push（推到 `refs/for/<branch>`）。两者在 onboarding 阶段一次性配好，后续使用时无需再次提供。
 
-**验证方式**: 用户提供用户名后，执行 SSH 验证：
+**验证方式 A（必做）**: REST API 验证 — 等价于 gerrit-mcp-server 调通的最小条件：
+
+```bash
+# Linux / macOS / Git Bash
+curl -sS -u "<用户名>:<HTTP密码>" "https://whale-gerrit.zeasn.com/a/accounts/self"
+
+# PowerShell
+$cred = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("<用户名>:<HTTP密码>"))
+Invoke-WebRequest -Uri "https://whale-gerrit.zeasn.com/a/accounts/self" -Headers @{ Authorization = "Basic $cred" } -UseBasicParsing
+```
+
+- IF 返回当前用户的 JSON（前缀 `)]}'` 后跟账户信息）→ 显示 "✅ Gerrit REST 连接正常（gerrit-mcp-server 可用）"
+- IF 返回 401 → 提示"用户名 / HTTP 密码错误"，请用户确认 HTTP Credentials 是否在 Gerrit Settings 中生成（**不是登录密码**）
+- IF 连接超时或域名解析失败 → 进入"网络诊断步骤"
+
+**验证方式 B（可选但推荐）**: SSH 验证 — 验证 push_to_gerrit 后续是否能成功 push：
+
 ```bash
 ssh -p 29418 <用户名>@whale-gerrit.zeasn.com gerrit version
 ```
 
-- IF 返回版本信息（如 `gerrit version 3.6.0`）→ 显示 "✅ Gerrit 连接正常"
-- IF 连接失败 → 执行网络诊断后引导用户修复：
+- IF 返回 `gerrit version 3.6.0` → 显示 "✅ Gerrit SSH 连接正常（push_to_gerrit 可用）"
+- IF 失败但 REST 已通 → 显示 "⚠️ REST 通但 SSH 不通：可以使用读工具与 cherry_pick_change，但 push_to_gerrit 会失败。请上传 SSH 公钥后重试"，**不阻塞** onboarding 进入下一步
+- IF REST 也不通 → 与 REST 失败合并诊断（见下）
 
-**网络诊断步骤**（连接失败时自动执行）：
+**网络诊断步骤**（任一连接失败时自动执行）：
 ```bash
 # 1. 检查 DNS 解析
 nslookup whale-gerrit.zeasn.com
 
-# 2. 检查 SSH 端口连通性
+# 2. 检查 HTTPS 端口连通性（gerrit-mcp-server 走 443）
+nc -zv whale-gerrit.zeasn.com 443 -w 5
+
+# 3. 检查 SSH 端口连通性（push_to_gerrit 走 29418）
 nc -zv whale-gerrit.zeasn.com 29418 -w 5
 
-# 3. 检查是否需要代理
+# 4. 检查是否需要代理
 echo $http_proxy $https_proxy
 ```
 
 根据诊断结果给出针对性建议：
 - DNS 解析失败 → "请检查 DNS 配置或 /etc/hosts 是否有 whale-gerrit.zeasn.com 的记录"
-- 端口不通 → "SSH 端口 29418 被防火墙拦截，请联系网络管理员开放，或确认是否需要配置代理"
-- DNS 和端口都通但 SSH 认证失败 → 引导配置 SSH 密钥：
+- 443 端口不通 → "HTTPS 端口被拦截，gerrit-mcp-server 无法工作。请确认是否需要 http_proxy 环境变量"
+- 29418 端口不通 → "SSH 端口 29418 被防火墙拦截，push_to_gerrit 会失败。请联系网络管理员开放，或确认是否需要 SSH 代理；REST 工具不受影响"
+- DNS 与端口都通但 REST 401 → 引导用户在 Gerrit Settings → HTTP Credentials → Generate Password 重新生成 HTTP 密码（注意**不是**登录密码）
+- DNS 与端口都通但 SSH 认证失败 → 引导配置 SSH 密钥：
   ```
-  ❌ Gerrit SSH 连接失败
+  ❌ Gerrit SSH 连接失败（push_to_gerrit 暂不可用）
   
   请确保你的 SSH 公钥已上传到 Gerrit：
   1. 生成 SSH 密钥（如果没有）：ssh-keygen -t rsa -b 4096

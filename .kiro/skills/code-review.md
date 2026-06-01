@@ -82,7 +82,7 @@ inclusion: auto
 
 ### Gerrit 工作流
 
-在 gerritpush 前执行自审，减少 Gerrit-AI 评论：
+在调用 `push_to_gerrit` MCP 工具前执行自审，减少 Gerrit-AI 评论：
 
 ```
 生成 Commit Message
@@ -91,7 +91,7 @@ inclusion: auto
    ↓
 👤 用户确认 push
    ↓
-gerritpush
+push_to_gerrit (Gerrit MCP Server)
 ```
 
 ## 自动修复

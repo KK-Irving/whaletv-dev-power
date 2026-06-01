@@ -26,16 +26,24 @@ whaletv-dev-power/
 │   │   ├── package.json
 │   │   ├── tsconfig.json
 │   │   └── src/index.ts                  # 15 个工具实现
-│   └── opengrok-mcp-server/              # OpenGrok 代码搜索（4 个工具）
+│   ├── opengrok-mcp-server/              # OpenGrok 代码搜索（4 个工具）
+│   │   ├── package.json
+│   │   ├── tsconfig.json
+│   │   └── src/index.ts                  # 4 个工具实现
+│   └── gerrit-mcp-server/                # Gerrit REST 集成（12 个工具）
 │       ├── package.json
 │       ├── tsconfig.json
-│       └── src/index.ts                  # 4 个工具实现
+│       └── src/                          # 4 读 + 8 写工具实现
+│           ├── index.ts                  # MCP server 入口与 12 工具注册
+│           ├── auth.ts | http-client.ts | errors.ts | types.ts
+│           └── tools/                    # query / cherry-pick / push / comment / reviewer
 ├── steering/
 │   ├── onboarding.md                     # 首次配置引导流程
 │   ├── pr-cr-workflow.md                 # PR/CR 处理工作流（9 步）
 │   ├── cherry-pick-workflow.md           # Cherry-Pick 同步工作流
 │   ├── bug-analysis-workflow.md          # Bug 分析工作流
 │   ├── gerrit-workflow.md                # Gerrit 推送与评论处理
+│   ├── commit-message-workflow.md        # 智能 Commit Message 生成 + Branch_Detector
 │   ├── local-code-guide.md              # 本地源码操作指南
 │   └── safety-rules.md                  # 安全规则（三层防护）
 ├── hooks/
@@ -48,8 +56,8 @@ whaletv-dev-power/
     │   ├── brainstorming.md              # 先设计再编码（方案探索）
     │   ├── code-review.md               # 代码自审（提交前质量检查）
     │   ├── project-code-mapping.md       # 项目-代码路径匹配
-    │   ├── gerrit-integration.md         # Gerrit SSH 集成
-    │   ├── opengrok-integration.md       # OpenGrok 代码搜索集成
+    │   ├── gerrit-integration.md         # Gerrit Skill（历史 SSH 通道，新流程优先用 gerrit-mcp-server）
+    │   ├── opengrok-integration.md       # OpenGrok Skill（与 opengrok-mcp-server 配合）
     │   └── internal-docs.md              # Confluence 文档查询
     ├── specs/                            # Spec 文档（需求/设计/任务/构建规范）
     └── .learnings/                       # 经验沉淀目录
@@ -396,10 +404,11 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 │                                                          │
 │  MCP Server 层:                                          │
 │  ├── zmind-mcp-server (15 tools) ──→ Zmind (Redmine)    │
-│  └── opengrok-mcp-server (4 tools) ──→ OpenGrok           │
+│  ├── opengrok-mcp-server (4 tools) ──→ OpenGrok          │
+│  └── gerrit-mcp-server (12 tools) ──→ Gerrit REST       │
+│         (4 读 + 8 写：cherry-pick / push / comment / reviewer) │
 │                                                          │
-│  Skill 层（SSH/HTTP 直接调用）:                            │
-│  ├── gerrit-integration ──→ Gerrit (SSH:29418)          │
+│  Skill 层（HTTP 直接调用）:                                │
 │  └── internal-docs ──→ Confluence (REST API)            │
 │                                                          │
 │  Steering 层（工作流指导）:                                │
@@ -407,20 +416,21 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 │  ├── cherry-pick-workflow                                │
 │  ├── bug-analysis-workflow                               │
 │  ├── gerrit-workflow                                     │
+│  ├── commit-message-workflow（智能 Commit + Branch_Detector）│
 │  └── safety-rules (三层防护)                              │
 └─────────────────────────────────────────────────────────┘
          │              │              │            │
          ▼              ▼              ▼            ▼
 ┌──────────┐  ┌──────────────┐  ┌─────────┐  ┌──────────┐
 │  Zmind   │  │   Gerrit     │  │  Docs   │  │ OpenGrok │
-│ (Redmine)│  │ (SSH:29418)  │  │(Confl.) │  │(只读搜索)│
+│ (Redmine)│  │ (REST/HTTPS) │  │(Confl.) │  │(只读搜索)│
 └──────────┘  └──────────────┘  └─────────┘  └──────────┘
 ```
 
 | 系统 | 地址 | 认证方式 | 配置需提供 |
 |------|------|---------|-----------|
 | Zmind | https://zmind.whaletv.com | API Key | API 密钥 |
-| Gerrit | https://whale-gerrit.zeasn.com | SSH 密钥 + HTTP 密码 | 用户名、密码 |
+| Gerrit | https://whale-gerrit.zeasn.com | HTTP Password（gerrit-mcp 走 REST） + SSH 公钥（push 工具走 git/SSH） | 用户名、HTTP Password |
 | Confluence | https://docs.whaletv.com | HTTP Basic Auth | 用户名、密码 |
 | OpenGrok | https://opengrok.zeasn.com | HTTP Basic Auth | 用户名、密码 |
 
@@ -451,12 +461,25 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
         "OPENGROK_PASSWORD": "你的OpenGrok密码"
       },
       "disabled": false
+    },
+    "gerrit-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@kk-irving/gerrit-mcp-server@latest"],
+      "env": {
+        "GERRIT_URL": "https://whale-gerrit.zeasn.com",
+        "GERRIT_USERNAME": "你的Gerrit用户名",
+        "GERRIT_HTTP_PASSWORD": "你的GerritHTTPPassword",
+        "GERRIT_TIMEOUT_MS": "30000"
+      },
+      "disabled": false,
+      "autoApprove": []
     }
   }
 }
 ```
 
-> 💡 使用 `@latest` 标签确保每次启动时自动检查并获取最新版本，无需手动更新。通常 Power 安装后 mcp.json 会自动生成基础配置，你只需要填入 `ZMIND_API_KEY` 即可。也可以在引导流程中直接告诉 AI 你的密钥。
+> 💡 使用 `@latest` 标签确保每次启动时自动检查并获取最新版本，无需手动更新。通常 Power 安装后 mcp.json 会自动生成基础配置，你只需要填入凭据即可。
+> ⚠️ `GERRIT_HTTP_PASSWORD` 是 Gerrit Settings → HTTP Credentials 生成的 Token，**不是登录密码**。写操作（cherry-pick / push / comment / reviewer）的 `autoApprove` 保持空数组，依赖 Steering 层用户确认机制。
 
 ## 开发
 
@@ -465,13 +488,20 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 ```bash
 cd mcp-servers/zmind-mcp-server && npx tsc --noEmit
 cd ../opengrok-mcp-server && npx tsc --noEmit
+cd ../gerrit-mcp-server && npx tsc --noEmit
 ```
 
 ### 使用 MCP Inspector 调试
 
 ```bash
+# Zmind
 cd mcp-servers/zmind-mcp-server
 ZMIND_API_KEY=your_key npx @modelcontextprotocol/inspector npx tsx src/index.ts
+
+# Gerrit（4 读 + 8 写工具）
+cd mcp-servers/gerrit-mcp-server
+GERRIT_URL=https://whale-gerrit.zeasn.com GERRIT_USERNAME=user GERRIT_HTTP_PASSWORD=token \
+  npx @modelcontextprotocol/inspector npx tsx src/index.ts
 ```
 
 ### 本地运行
@@ -482,6 +512,14 @@ ZMIND_API_KEY=your_key npx tsx src/index.ts
 # Server 启动后等待 stdio 输入（正常行为）
 ```
 
+### 发布新版本到 npm
+
+```bash
+cd mcp-servers/gerrit-mcp-server  # 或 zmind / opengrok
+npm version patch                  # 0.1.0 → 0.1.1（patch / minor / major 三选一）
+npm publish --access=public        # 用户级 ~/.npmrc 已存 token，免 OTP
+```
+
 ## 技术栈
 
 | 技术 | 用途 |
@@ -490,8 +528,9 @@ ZMIND_API_KEY=your_key npx tsx src/index.ts
 | @modelcontextprotocol/sdk 1.12.1 | MCP 协议框架 |
 | zod 3.24.4 | 运行时参数校验 |
 | stdio | MCP 传输协议 |
-| SSH (端口 29418) | Gerrit 查询 |
-| HTTP Basic Auth | Confluence API |
+| HTTPS (REST API) | Gerrit / OpenGrok / Confluence / Zmind 集成 |
+| git + SSH (端口 29418) | `push_to_gerrit` 工具内部用本地 git push 到 `refs/for/<branch>`（需 SSH 公钥已上传到 Gerrit） |
+| HTTP Basic Auth | Confluence / OpenGrok 鉴权 |
 | Kiro Steering | AI 工作流定义 |
 | Kiro Skills | AI 行为指导 |
 
@@ -502,7 +541,8 @@ ZMIND_API_KEY=your_key npx tsx src/index.ts
 │  whaletv-dev-power (本项目)                           │
 │  ├── zmind-mcp-server (15 tools) ← FAE Power 调用   │
 │  ├── opengrok-mcp-server (4 tools) ← FAE Power 调用    │
-│  └── steering/ (PR/CR/Cherry-Pick — 开发者用)        │
+│  ├── gerrit-mcp-server (12 tools) ← FAE Power 调用    │
+│  └── steering/ (PR/CR/Cherry-Pick/Commit-Message — 开发者用)│
 └─────────────────────────────────────────────────────┘
          ↑ 提供 MCP 工具能力
          │
@@ -525,10 +565,12 @@ ZMIND_API_KEY=your_key npx tsx src/index.ts
 ### ✅ Phase 1（已完成）
 - [x] Zmind MCP Server（15 个工具）
 - [x] OpenGrok MCP Server（4 个工具：全文搜索、符号搜索、路径搜索、文件内容获取）
+- [x] **Gerrit MCP Server（12 个工具：4 读 + 8 写，含 Cherry-Pick / push_to_gerrit / comment / reviewer / set_review_label）**
 - [x] PR/CR 全链路工作流（9 步）
 - [x] Cherry-Pick 同步工作流
 - [x] Bug 分析工作流
-- [x] Gerrit SSH 集成（查询提交记录）
+- [x] Gerrit 推送与评论处理（已完全 MCP 化，替代外部 gerritpush）
+- [x] **智能 Commit Message 生成（commit-message-workflow + Branch_Detector 五级降级策略，基于 git diff + Zmind Issue 自动生成 [版本号][类型][whaletv][Zmind#ID]五段式）**
 - [x] Confluence 文档搜索集成
 - [x] 安全防护三层体系
 - [x] 首次配置引导流程（onboarding）
@@ -537,10 +579,8 @@ ZMIND_API_KEY=your_key npx tsx src/index.ts
 
 ### 🔜 Phase 2（计划中）
 - [ ] **Kiro CLI Agent 支持**（`kiro-cli chat --agent whaletv-dev`，完整 steering/skills 加载）
-- [ ] Gerrit MCP Server（独立 MCP 服务器，支持 Cherry-Pick/评论等写操作）
 - [ ] 知识库集成（问题沉淀和检索）
 - [ ] 多代码库批量操作支持
-- [ ] Commit Message 智能生成（基于 diff 自动填充 what/why/how）
 
 ### 🔮 Phase 3（远期）
 - [ ] 自动识别 Issue 类型并推荐工作流

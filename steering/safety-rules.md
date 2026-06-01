@@ -207,3 +207,37 @@ Hook 配置文件 `hooks/safety-hooks.json` 定义命令匹配模式和拦截动
 - IF AI 误判规则导致操作被不当拒绝，THEN 用户可明确指示 AI 执行该操作
 - IF Hook 拦截了用户确实需要执行的命令，THEN 向用户说明拦截原因，由用户自行在终端中执行
 - IF 人工确认超时或用户未响应，THEN 保持暂停状态，不自动继续或取消
+
+---
+
+## Steering 改动准则
+
+> 借鉴 Karpathy [autoresearch](https://github.com/karpathy/autoresearch) `program.md` 的 simplicity criterion 写法。Steering files 是 AI 行为契约，无序的累加会让契约腐化。每次改 steering 前对照下表自查。
+
+### 五条简洁性判断
+
+| 改动形态 | 决策 | 理由 |
+|---|---|---|
+| 一段措辞改动让 AI 行为更可预测，且步骤数不增加 | ✅ **保留** | 纯净收益，零成本 |
+| 一段措辞改动让 AI 行为更可预测，但增加了 ≥ 20 行解释 | ⚠️ **通常不保留** | 信息密度下降的代价大于行为可预测性收益；除非新行为是真实出过事故的反模式 |
+| 一段措辞**删除**后 AI 行为没变化 | ✅ **一定要删** | 沉默无效行 = AI 噪音；和 autoresearch 的"删 code 等价改进就是真改进"同构 |
+| 步骤数 +1，但减少了一个真实存在的错误模式（true positive 拦截） | ✅ **保留** | 用一行规则换掉一类反复犯的错，杠杆比 ≥ 10x |
+| 步骤数 +1，只是为了凑"完整性"（"听上去更专业"/"为了对称"/"补全 X 类场景"但该场景从未出现过） | ❌ **不保留** | 等价于 darwin-skill 反例黑名单第 3 条"为凑分增冗余"；让 steering 变重却不解决任何真实问题 |
+
+### 改 steering 的正向问题清单
+
+任何 steering 改动提案，先对自己回答以下 4 个问题：
+
+1. **要修复什么真实事故？** 给出 issue / 错误记录 / Developer 反馈的具体引用。如果回答是"想得更全面"或"考虑到将来可能"——驳回。
+2. **改动后是否减少了 AI 的可选行为分支？** 减少 = 好（行为更确定）；增加 = 一般要重新审视。
+3. **能否用"删一段已有内容"达到同样效果？** 能删的优先删，不能时再考虑加。
+4. **改动是否破坏现有 Property 契约？**（如 commit-message 的 Property 15-20 / Branch_Detector 的 sentinel `ASK_DEVELOPER`）破坏 → 必须先更新对应 spec/PBT，再改 steering。
+
+### 黑名单（不要做的 steering 改动）
+
+- ❌ 把"必须 / 不得 / 禁止"等硬约束改成"建议 / 可以考虑 / 灵活把握"——这等于把契约改成意愿，AI 在边界 case 会跑偏
+- ❌ 引入新的 sentinel / 占位符（如 `<UNKNOWN>` / `<TBD>` / `MAYBE_X`），让流程"不阻塞"——大多数情况下真正解法是让 AI 显式询问 Developer
+- ❌ 在 Steering 里嵌入临时的、和某次具体 Issue 强绑定的指令（如"对 Issue #334001 的处理方式是 X"）——临时上下文应该走对话，不该污染 steering
+- ❌ 在 Steering 里嵌入和某个 runtime 强绑定的指令（如"在 Claude Code 中..."）——本项目的 steering 应该 Kiro-runtime-neutral
+- ❌ 一次 commit 里改多个 Steering file 而无统一上下文——每个 steering 改动应该对应一个 spec 或一个错误记录条目
+

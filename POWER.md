@@ -47,6 +47,7 @@ author: "WhaleTV Team"
 - **cherry-pick-workflow** — 跨分支 Cherry-Pick 同步工作流，触发示例："把 #332669 cp 到 mp"
 - **bug-analysis-workflow** — Bug 自动分析工作流，触发示例："分析下 #334001"
 - **gerrit-workflow** — Gerrit 推送与评论处理，触发示例："推送代码到 Gerrit"
+- **commit-message-workflow** — 智能 Commit Message 生成器与 Branch_Detector 五级降级策略（与 PR/CR 流程衔接），触发示例："生成 commit message"
 - **local-code-guide** — 本地源码操作规范（搜索策略、目录结构），自动生效
 - **safety-rules** — 安全规则与三层防护体系，自动生效
 - **onboarding** — 首次配置引导流程（Zmind → 项目映射 → Gerrit → 文档系统），触发示例："配置" / "setup"
