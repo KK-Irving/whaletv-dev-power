@@ -21,6 +21,18 @@
       },
       "disabled": false,
       "autoApprove": []
+    },
+    "gerrit-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@kk-irving/gerrit-mcp-server@latest"],
+      "env": {
+        "GERRIT_URL": "https://whale-gerrit.zeasn.com",
+        "GERRIT_USERNAME": "",
+        "GERRIT_HTTP_PASSWORD": "",
+        "GERRIT_TIMEOUT_MS": "30000"
+      },
+      "disabled": false,
+      "autoApprove": []
     }
   }
 }

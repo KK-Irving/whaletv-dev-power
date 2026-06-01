@@ -67,7 +67,7 @@ whaletv-dev-power/
 | 3 | **PR/CR 全链路处理** | 9 步标准流程：获取 Issue → 修改代码 → 推送 Gerrit → 更新状态 |
 | 4 | **Cherry-Pick 同步** | 批量 CP 到 MP 分支，自动发现目标分支，分类汇报结果 |
 | 5 | **Bug 自动分析** | 日志解析 + 异常提取 + 代码定位 + 结构化报告 |
-| 6 | **Gerrit 集成** | SSH 查询提交记录、处理 Gerrit-AI 评论、gerritpush 推送 |
+| 6 | **Gerrit 集成** | Gerrit MCP（12 工具）查询 Change/分支/评论、push_to_gerrit 推送、cherry-pick 三态分类、处理 Gerrit-AI 评论 |
 | 7 | **内部文档查询** | Confluence CQL 搜索，自动关联已知问题和设计文档 |
 | 8 | **安全防护** | 三层体系：规则约束 + Hook 拦截 + 人工确认 |
 | 9 | **项目-代码匹配** | Zmind 项目自动映射到本地代码路径 |

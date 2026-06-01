@@ -224,7 +224,7 @@ curl -s -u "<用户名>:<密码>" "https://opengrok.zeasn.com/api/v1/search?full
 • "帮我处理 PR #12345" — 全链路 PR/CR 处理
 • "分析下 #334001" — Bug 自动分析
 • "把 #332669 cp 到 mp" — Cherry-Pick 同步
-• "推送代码到 Gerrit" — gerritpush + 处理评论
+• "推送代码到 Gerrit" — push_to_gerrit + 处理评论
 • "回顾经验" — 查看历史经验和错误记录
 ```
 

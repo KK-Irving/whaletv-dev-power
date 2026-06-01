@@ -10,6 +10,7 @@
 ## 前置条件
 
 - Zmind MCP Server 可用（`ZMIND_API_KEY` 已配置）
+- Gerrit MCP Server 可用（`GERRIT_URL` / `GERRIT_USERNAME` / `GERRIT_HTTP_PASSWORD` 已配置）
 - Gerrit API 可达（用户环境可访问 Gerrit 服务）
 - 用户提供了 Zmind Issue ID 或 Gerrit Change 号
 
@@ -30,27 +31,29 @@
 
 ### ② 搜索 master 已合入的 Changes
 
-**AI 动作**：通过 Gerrit API 查询与指定 Issue 关联的所有已合入 master 的 Change。
+**AI 动作**: 调用 Gerrit MCP Server 的 `search_changes` 工具检索已合入 master 的源 Change。
 
-- 使用 Gerrit 搜索查询：`topic:<issue_id>` 或 `message:<issue_id>` + `status:merged` + `branch:master`
-- 识别每个 Change 所属的 project
+**查询模板**（按情况选用）：
+- 通过 Issue ID：`message:Zmind#<issue_id> status:merged branch:master`
+- 通过 Topic：`topic:<topic> status:merged branch:master`
+- 通过 Change-Id：`change:<change_id> status:merged`
+- 通过 Hashtag：`hashtag:<tag> status:merged branch:master`
 
-**预期输出**：已合入 master 的 Change 列表，包含 Change ID、project、subject
+**输出**：源 Change 列表（每条含 change_id、project、subject、web_url、zmind_issue_ids）
 
-**错误处理**：IF Gerrit API 查询失败 → 报告错误并等待用户指示；IF 未找到已合入的 Change → 通知用户并终止流程
+**错误处理**：IF `search_changes` 返回空 THEN 询问 Developer 是否调整查询条件
 
 ---
 
 ### ③ 发现目标 MP 分支
 
-**AI 动作**：通过 Gerrit API 查询每个相关 project 中名称包含 `_mp` 后缀的活跃分支。
+**AI 动作**: 对步骤 ② 中发现的每个唯一 project，调用 `list_branches(project, pattern="_mp")` 获取 MP 分支列表。
 
-- 对步骤 ② 中发现的每个 project，查询其分支列表
-- 筛选名称匹配 `*_mp` 模式的分支作为 CP 目标
+**预期输出**：每个 project 下匹配 `_mp` pattern 的活跃分支列表（含 ref、name、HEAD revision）
 
-**预期输出**：每个 project 对应的 MP 分支列表
-
-**错误处理**：IF 某个 project 无 MP 分支 → 在计划表中标注"无 MP 分支"，继续处理其他 project
+**错误处理**：
+- IF 某 project 返回空数组（含 note `no branches matched the pattern`）→ 在 CP 计划中标注"该 project 无 MP 分支"
+- IF `list_branches` 调用失败 → 跳过该 project，继续后续；最终汇报失败的 project 列表
 
 ---
 
@@ -86,15 +89,24 @@ IF 用户拒绝 → 终止流程，不执行任何 CP 操作
 
 ### ⑤ 批量执行 Cherry-Pick
 
-**AI 动作**：通过 Gerrit API 逐个执行 Cherry-Pick 操作。
+**AI 动作**: 按 CP 计划表格逐项调用 Gerrit MCP Server 的 `cherry_pick_change` 工具。
 
-- 按计划表格顺序，对每个 (源 Change, 目标分支) 组合执行 CP
-- 使用 Gerrit REST API 的 cherry-pick 端点
-- 记录每次 CP 的执行结果
+**调用参数**：`{ change_id: <源 Change>, destination_branch: <目标 MP 分支> }`
 
-**预期输出**：每次 CP 操作的执行状态
+**结果分类汇报**（按返回的 status 字段）：
 
-**错误处理**：IF Gerrit API 调用失败 → 立即停止后续 CP 操作，转入步骤 ⑥ 汇报已完成和未完成项目
+| status | 含义 | 汇报方式 |
+|--------|------|----------|
+| `success` | CP 成功，已创建新 Change | ✅ 列出新 Change 的 Web URL |
+| `skipped_already_merged` | 目标分支已包含等效提交 | ⏭️ 友好告知，无需操作 |
+| `conflict` | 代码冲突，无法自动 CP | ❌ 列出 `conflicting_files`，提示 Developer 手动 cherry-pick |
+| (抛错) `error_type=not_found` | 目标分支不存在或权限不足 | ⚠️ 列出失败的目标分支 |
+| (抛错) 其他 | 网络/权限/服务器错误 | 报告具体 `error_type` 与 `message` |
+
+**关键约束**：
+- 每个 CP 都是独立 MCP 工具调用，单个失败不阻塞其余
+- 失败列表与成功列表都汇总后展示给 Developer
+- 涉及 MP 分支的 CP 在执行前已通过步骤 ④ 用户确认
 
 ---
 

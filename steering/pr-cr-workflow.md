@@ -81,11 +81,26 @@ git add -p
 
 ### ⑥ 生成 Commit Message
 
-**AI 动作**: 按以下格式规范生成 Commit Message
+**AI 动作**: 调用 Commit_Message_Generator 生成完整的五段式 commit message。
+
+**输入**：
+- `git diff --staged` 的暂存区 diff
+- 当前 Zmind Issue 详情（已在步骤 ① 获取）
+- Branch_Detector 识别的目标推送分支（在步骤 ⑦ 推送前完成识别）
+
+**输出**：符合团队规范的完整五段式 Commit Message（首行 `[版本号][类型][whaletv][Zmind#ID]简述` + `[what]` `[why]` `[how]` `[test]` `[impact]` 五段）
+
+**详细行为契约**：参见 `commit-message-workflow.md`（涵盖字段生成算法、元数据补全规则、format/parse round-trip 契约）
+
+**预期输出**: 符合格式规范的完整 Commit Message
+**错误处理**: IF 任一字段生成失败或为空，THEN 不展示完整 commit message，按 `commit-message-workflow.md` 章节 ⑩ 错误恢复处理；IF 无 Issue 上下文，THEN 拒绝生成并提示 Developer 关联 Issue
+
+#### 格式快速参考
+
+> 详细规则与行为契约请加载 steering: `commit-message-workflow`
 
 ```
 [版本号][类型][whaletv][Zmind#ID]简述
-
 [what]具体做了什么修改
 [why]为什么需要这个修改
 [how]如何实现的（技术方案简述）
@@ -93,15 +108,13 @@ git add -p
 [impact]影响范围
 ```
 
-**格式说明**:
-- **版本号**: 从 Issue 的 `target_version` 字段获取。IF target_version 为空，THEN 询问用户指定版本号
-- **类型**: 取值限定为 `bugfix` | `feature` | `refactor` | `hotfix` 之一
-- **whaletv**: 固定标识
-- **Zmind#ID**: 当前处理的 Issue ID
-- **简述**: 一句话概括修改内容
-
-**预期输出**: 符合格式规范的完整 Commit Message
-**错误处理**: IF 无法确定类型，THEN 根据 Issue tracker 类型推断（Bug→bugfix, Feature→feature），不确定时询问用户
+| 字段 | 说明 |
+|------|------|
+| **版本号** | 从 Issue 的 `target_version` 字段获取。IF target_version 为空，THEN 询问用户指定版本号 |
+| **类型** | 取值限定为 `bugfix` \| `feature` \| `refactor` \| `hotfix` 之一 |
+| **whaletv** | 固定标识 |
+| **Zmind#ID** | 当前处理的 Issue ID |
+| **简述** | 一句话概括修改内容 |
 
 ---
 
@@ -119,19 +132,34 @@ git add -p
 
 ### ⑦ 推送 Gerrit
 
-**AI 动作**: 执行 commit 并使用 `gerritpush` 命令推送到 Gerrit
-```bash
-git commit
-gerritpush
-```
-**预期输出**: 代码成功推送到 Gerrit，获得 Change 链接
-**错误处理**: IF push 被拒绝或失败，THEN 报告错误信息（如权限不足、冲突等），等待用户指示是否重试或终止
+**AI 动作**: 严格按以下顺序执行：
+1. 调用 Branch_Detector 识别目标远程分支并向 Developer 展示识别来源（详见 `commit-message-workflow.md` ③ 章节）
+2. 等待 Developer 确认目标分支（含 MP 分支的 ⚠️ 警告与二次确认）
+3. 执行 `git commit`（基于步骤 ⑥ 生成的 commit message）
+4. 调用 Gerrit MCP Server 的 `push_to_gerrit` 工具（参数：`cwd`、`target_branch`、可选 `reviewers` / `wip` / `topic`）
+5. 处理工具返回结果：
+   - `{ ok: true, change_url }` → 展示 Change URL 给 Developer
+   - `{ ok: true, change_url_unavailable: true }` → 展示原始 stderr 给 Developer
+   - `{ ok: false, error_type: "mp_branch_push_blocked" }` → 提示 Developer MP 分支不能自动推送
+   - `{ ok: false, error_type: "git_push_failed" }` → 报告 stderr 与 exit_code，等待 Developer 指示
+
+**禁止使用**：外部 `gerritpush` shell 命令（已被 Gerrit_Push_Tool 替代）
+
+**预期输出**: 代码成功推送到 Gerrit 并展示 Change URL
+**错误处理**: IF 工具返回 `ok: false`，THEN 根据 `error_type` 分类汇报，等待 Developer 指示是否重试或终止
 
 ### ⑧ 处理 Gerrit-AI 评论
 
-**AI 动作**: 逐条读取 Gerrit-AI 生成的评论，结合代码变更上下文判断是否采纳：
-- **采纳**: 修复代码 → 回复修复说明 → 标记 resolved
-- **不采纳**: 回复不采纳理由 → 标记 resolved
+**AI 动作**: 通过 Gerrit MCP Server 的工具处理评论：
+1. 调用 `get_change_comments(change_id)` 拉取所有评论（已按时间升序排序）
+2. 逐条分析评论内容判断是否采纳
+3. 根据评论类型选择回复工具：
+   - **inline 评论**（含 path、line）→ 使用 `reply_inline_comment(change_id, parent_comment_id, message, unresolved=false)`（同时回复并 mark resolved）
+   - **review 级评论**（path/line 为空） → 使用 `add_review_comment(change_id, message)`，再单独调用 `mark_comment_resolved(change_id, comment_id)`
+4. 采纳：修复代码 → 回复修复说明 → 标记 resolved
+5. 不采纳：回复不采纳理由 → 标记 resolved
+
+**关键约束**：每条评论必须 resolved（无论采纳或不采纳）
 
 **预期输出**: 所有 Gerrit-AI 评论已处理完毕，每条评论都有回复且标记为 resolved
 **错误处理**: IF 无法判断某条评论是否应采纳，THEN 向用户展示评论内容并请求指示

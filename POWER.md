@@ -2,7 +2,7 @@
 name: "whaletv-dev-power"
 displayName: "WhaleTV Developer Power"
 description: "面向 WhaleTV 开发者的 AI 辅助工具包，集成 Zmind 项目管理、OpenGrok 代码搜索和团队标准工作流"
-keywords: ["whaletv", "zmind", "gerrit", "opengrok", "cherry-pick", "pr", "cr", "android", "项目管理", "代码搜索"]
+keywords: ["whaletv", "zmind", "gerrit", "opengrok", "cherry-pick", "pr", "cr", "android", "项目管理", "代码搜索", "gerrit-mcp", "commit-message"]
 author: "WhaleTV Team"
 ---
 
@@ -37,6 +37,7 @@ author: "WhaleTV Team"
 |--------|--------|------|
 | zmind-mcp-server | 15 | Issue 查询/创建/更新、附件下载、工时记录、项目管理 |
 | opengrok-mcp-server | 4 | 全文搜索、符号定义搜索、路径搜索、文件内容获取 |
+| gerrit-mcp-server | 12 | Gerrit Change/Branch/Comment 查询、Cherry-Pick、推送 refs/for/xxx、评论与 Reviewer/Label 管理（包名 `@kk-irving/gerrit-mcp-server`，stdio 传输，详见 `gerrit-workflow` / `pr-cr-workflow` / `cherry-pick-workflow` / `commit-message-workflow`） |
 
 ## Available Steering Files
 
@@ -86,6 +87,18 @@ Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请
         "OPENGROK_PROJECT": ""
       },
       "disabled": false
+    },
+    "gerrit-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@kk-irving/gerrit-mcp-server@latest"],
+      "env": {
+        "GERRIT_URL": "https://whale-gerrit.zeasn.com",
+        "GERRIT_USERNAME": "你的Gerrit用户名",
+        "GERRIT_HTTP_PASSWORD": "你的GerritHTTPPassword",
+        "GERRIT_TIMEOUT_MS": "30000"
+      },
+      "disabled": false,
+      "autoApprove": []
     }
   }
 }
@@ -95,7 +108,9 @@ Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请
 > - 使用 `@latest` 标签确保每次启动时自动获取最新版本
 > - `ZMIND_API_KEY` 必须配置在 mcp.json 的 `env` 字段中，仅设置系统环境变量不会生效
 > - `OPENGROK_USERNAME` 和 `OPENGROK_PASSWORD` 同样需要配置在 mcp.json 的 `env` 字段中
+> - `GERRIT_USERNAME` 和 `GERRIT_HTTP_PASSWORD` 同样需要配置在 mcp.json 的 `env` 字段中（使用 Gerrit Settings → HTTP Credentials 生成的 Token，**不是登录密码**）
 > - 获取 Zmind API 密钥：登录 https://zmind.whaletv.com → 右上角"我的账户" → 左侧"API 访问密钥"
+> - 获取 Gerrit HTTP Password：登录 https://whale-gerrit.zeasn.com → User Settings → HTTP Credentials → Generate New Password
 
 ### 环境变量说明
 
@@ -107,6 +122,10 @@ Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请
 | OPENGROK_USERNAME | OpenGrok 用户名 | ✅ 是 | 无 |
 | OPENGROK_PASSWORD | OpenGrok 密码 | ✅ 是 | 无 |
 | OPENGROK_PROJECT | 默认搜索项目名 | ❌ 否 | 无（搜索所有项目） |
+| GERRIT_URL | Gerrit 服务完整 HTTPS URL（如 `https://whale-gerrit.zeasn.com`） | ✅ 是 | 无 |
+| GERRIT_USERNAME | Gerrit 用户名 | ✅ 是 | 无 |
+| GERRIT_HTTP_PASSWORD | Gerrit HTTP Password（在 Gerrit Settings → HTTP Credentials 生成的 Token，非登录密码） | ✅ 是 | 无 |
+| GERRIT_TIMEOUT_MS | Gerrit 单次 HTTP 请求超时（毫秒，正整数） | ❌ 否 | 30000 |
 
 ### 配置验证
 
@@ -114,12 +133,16 @@ Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请
 # 检查环境变量
 echo "ZMIND_API_KEY: ${ZMIND_API_KEY:+已设置}"
 echo "OPENGROK_URL: ${OPENGROK_URL:+已设置}"
+echo "GERRIT_URL: ${GERRIT_URL:+已设置}"
 
 # 验证 Zmind 连接（应返回 200）
 curl -s -o /dev/null -w "%{http_code}" "${ZMIND_URL:-https://zmind.whaletv.com}/users/current.json?key=$ZMIND_API_KEY"
 
 # 验证 OpenGrok 连接（应返回 200）
 curl -s -o /dev/null -w "%{http_code}" "$OPENGROK_URL/api/v1/configuration"
+
+# 验证 Gerrit 连接（应返回 200，并输出当前认证用户的 JSON）
+curl -u "$GERRIT_USERNAME:$GERRIT_HTTP_PASSWORD" "$GERRIT_URL/a/accounts/self"
 
 # 检查 Node.js 版本（需要 18+）
 node --version
@@ -166,7 +189,7 @@ cd ~/cvte_code/amlogic && kiro
 
 触发："推送代码到 Gerrit" 或 "处理 Gerrit 评论"
 
-完整流程：推送代码(gerritpush) → 轮询等待 Gerrit-AI 评论 → 逐条处理评论（采纳/不采纳）
+完整流程：推送代码(push_to_gerrit) → 轮询等待 Gerrit-AI 评论 → 逐条处理评论（采纳/不采纳）
 
 详细步骤请加载 steering: `gerrit-workflow`
 
@@ -194,6 +217,26 @@ cd ~/cvte_code/amlogic && kiro
 - `search_symbol` — 符号定义位置搜索（类/方法/变量）
 - `search_path` — 按文件路径/文件名搜索
 - `get_file_content` — 获取文件完整源码内容（只读）
+
+## Gerrit MCP Server 工具列表
+
+### 读工具（4 个）
+
+- `query_change` — 查询单个 Change 的详情（subject、status、project、branch、owner、当前 patch set、Topic、关联的 Zmind Issue ID）
+- `list_branches` — 列出指定 project 下的分支，支持分支名子串过滤（常用于发现 `_mp` 系列 MP 分支）
+- `get_change_comments` — 获取指定 Change 上的全部评论（review + inline，按时间升序，含 `unresolved` 标志）
+- `search_changes` — 按 Gerrit 查询语法搜索 Change 列表（如 `topic:332669 status:merged branch:master`，limit 默认 25 上限 100）
+
+### 写工具（8 个）
+
+- `cherry_pick_change` — 通过 Gerrit REST 在目标分支上触发 cherry-pick，三态返回 `success` / `skipped_already_merged` / `conflict`（含冲突文件列表）
+- `push_to_gerrit` — 推送本地 commit 到 `refs/for/<target_branch>`，支持 reviewers / wip / topic 选项；自动拒绝向 `*_mp` 分支推送
+- `add_review_comment` — 向 Change 添加 review 级别评论（可附带 Code-Review/Verified 等 label）
+- `reply_inline_comment` — 在已有 inline 评论上发布回复，可同时设置 `unresolved` 标志
+- `mark_comment_resolved` — 将指定 inline 评论标记为已解决（不附加新文本）
+- `add_reviewer` — 向 Change 添加 Reviewer（接受邮箱或用户名）
+- `remove_reviewer` — 从 Change 的 Reviewer 列表中移除指定用户
+- `set_review_label` — 在当前 patch set 上设置标签（如 `Code-Review`、`Verified`），值范围 -2 至 +2
 
 ## 安全机制
 
