@@ -32,6 +32,7 @@ author: "WhaleTV Team"
 - **Bug 分析工作流**：自动下载日志、解析异常、定位代码、生成报告
 - **Code Review 处理工作流**：处理 Gerrit-AI 评论的三态评估闭环（ACCEPT / REJECT / ACK），ACCEPT 必须先改代码 + push 新 patch set 才能回复，避免假闭环
 - **智能 Commit Message 生成**：基于 git diff + Zmind Issue + Branch_Detector 五级降级自动生成 `[版本号][类型][whaletv][Zmind#ID]` 五段式 commit message
+- **模块路径地图（Module Path Map）**：覆盖 D4 / X5 / STB 三平台 ~90+ 业务子模块的精确路径前缀；AI 在代码搜索前先查地图缩小范围（自动生效，对 PR/CR、Bug 分析等所有定位代码的工作流提速）
 - **安全防护**：三层安全机制（规则约束 + Hook 拦截 + 人工确认）
 
 ### MCP 服务器
@@ -52,6 +53,7 @@ author: "WhaleTV Team"
 - **gerrit-workflow** — Gerrit 推送与评论处理，触发示例："推送代码到 Gerrit"
 - **code-review-handling** — Gerrit-AI / reviewer 评论的三态处理工作流（ACCEPT / REJECT / ACK），触发示例："处理评论"、"看看 Gerrit-AI 说了什么"
 - **commit-message-workflow** — 智能 Commit Message 生成器与 Branch_Detector 五级降级策略（与 PR/CR 流程衔接），触发示例："生成 commit message"
+- **module-path-map** — 模块路径地图（按 OpenGrok 平台 × AOSP 一级目录 × 业务子模块组织），自动生效；AI 在代码搜索前先查地图缩小范围，避免大范围 grep
 - **local-code-guide** — 本地源码操作规范（搜索策略、目录结构），自动生效
 - **safety-rules** — 安全规则与三层防护体系，自动生效
 - **onboarding** — 首次配置引导流程（Zmind → 项目映射 → Gerrit → 文档系统），触发示例："配置" / "setup"
@@ -266,6 +268,7 @@ cd ~/cvte_code/amlogic && kiro
 
 ## Best Practices
 
+- 代码定位前先查 `module-path-map.md` 命中路径前缀，再用前缀限定 git grep 搜索范围（避免大范围 grep）
 - 优先使用 `git grep` 搜索源码（~0.4s），仅在无结果时降级到 OpenGrok
 - 在源码根目录启动 Kiro CLI，确保 AI 可直接访问项目文件
 - 使用 `git add -p` 进行 hunk 级别精确暂存，避免提交无关改动

@@ -45,26 +45,29 @@ whaletv-dev-power/
 │   ├── gerrit-workflow.md                # Gerrit 推送与评论处理
 │   ├── code-review-handling.md           # Gerrit-AI / reviewer 评论的三态处理（ACCEPT/REJECT/ACK）
 │   ├── commit-message-workflow.md        # 智能 Commit Message 生成 + Branch_Detector
-│   ├── local-code-guide.md              # 本地源码操作指南
-│   └── safety-rules.md                  # 安全规则（三层防护）
+│   ├── module-path-map.md                # 模块路径地图（D4 / X5 / STB 三平台 × AOSP 一级目录 × 业务子模块）
+│   ├── local-code-guide.md               # 本地源码操作指南
+│   └── safety-rules.md                   # 安全规则（三层防护）
 ├── hooks/
 │   └── safety-hooks.json                 # 命令拦截规则（6 条）
-└── .kiro/
-    ├── skills/                           # AI 行为指导（9 个 auto-inclusion）
-    │   ├── find-skill.md                 # 能力发现（自动匹配最优 skill）
-    │   ├── skill-creator.md              # 能力创建（发现缺口时自动补齐）
-    │   ├── self-improving.md             # 经验沉淀（错误/修正/最佳实践记录）
-    │   ├── brainstorming.md              # 先设计再编码（方案探索）
-    │   ├── code-review.md               # 代码自审（提交前质量检查）
-    │   ├── project-code-mapping.md       # 项目-代码路径匹配
-    │   ├── gerrit-integration.md         # Gerrit Skill（历史 SSH 通道，新流程优先用 gerrit-mcp-server）
-    │   ├── opengrok-integration.md       # OpenGrok Skill（与 opengrok-mcp-server 配合）
-    │   └── internal-docs.md              # Confluence 文档查询
-    ├── specs/                            # Spec 文档（需求/设计/任务/构建规范）
-    └── .learnings/                       # 经验沉淀目录
-        ├── LEARNINGS.md                  # 修正/洞察/最佳实践
-        ├── ERRORS.md                     # 错误记录
-        └── FEATURE_REQUESTS.md           # 功能请求
+├── agent/
+│   └── whaletv-dev.json                  # Kiro CLI Agent 配置（Phase 2）
+├── .kiro/
+│   ├── skills/                           # AI 行为指导（9 个 auto-inclusion）
+│   │   ├── find-skill.md                 # 能力发现（自动匹配最优 skill）
+│   │   ├── skill-creator.md              # 能力创建（发现缺口时自动补齐）
+│   │   ├── self-improving.md             # 经验沉淀（错误/修正/最佳实践记录）
+│   │   ├── brainstorming.md              # 先设计再编码（方案探索）
+│   │   ├── code-review.md                # 代码自审（提交前质量检查）
+│   │   ├── project-code-mapping.md       # 项目-代码路径匹配
+│   │   ├── gerrit-integration.md         # Gerrit Skill（历史 SSH 通道，新流程优先用 gerrit-mcp-server）
+│   │   ├── opengrok-integration.md       # OpenGrok Skill（与 opengrok-mcp-server 配合）
+│   │   └── internal-docs.md              # Confluence 文档查询
+│   └── specs/                            # Spec 文档（需求/设计/任务/构建规范）
+└── .learnings/                           # 经验沉淀目录（顶级，非 .kiro 子目录）
+    ├── LEARNINGS.md                      # 修正/洞察/最佳实践
+    ├── ERRORS.md                         # 错误记录
+    └── FEATURE_REQUESTS.md               # 功能请求
 ```
 
 ## 核心能力
@@ -85,6 +88,7 @@ whaletv-dev-power/
 | 12 | **代码自审** | 提交前自动检查质量，减少 Gerrit-AI 评论轮次 |
 | 13 | **Code Review 处理工作流** | Gerrit-AI / reviewer 评论的三态评估闭环（ACCEPT / REJECT / ACK）：get_unresolved_threads 拿 thread + UUID → AI 单条评估 + 用户审阅 → ACCEPT 必须先改代码 + push 新 patch set 才能回复（防假闭环）→ submit_review_reply 单次原子提交 |
 | 14 | **智能 Commit Message 生成** | 基于 git diff + Zmind Issue + Branch_Detector 五级降级（upstream / branch.merge / .gitreview / Change-Id 反查 / 询问 Developer）自动生成 `[版本号][类型][whaletv][Zmind#ID]` 五段式 commit message |
+| 15 | **模块路径地图（Module Path Map）** | 按 OpenGrok 平台（D4 / X5 / STB）× AOSP 一级目录 × 业务子模块组织的三层路径索引；AI 在代码搜索前先查地图缩小范围（`steering/module-path-map.md`，自动生效），避免大范围 grep |
 
 ### Zmind MCP Server 工具列表（15 个）
 
@@ -422,6 +426,8 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 │  ├── gerrit-workflow                                     │
 │  ├── code-review-handling（三态评估：ACCEPT/REJECT/ACK） │
 │  ├── commit-message-workflow（智能 Commit + Branch_Detector）│
+│  ├── module-path-map（D4/X5/STB 模块路径地图）            │
+│  ├── local-code-guide (代码搜索策略)                      │
 │  └── safety-rules (三层防护)                              │
 └─────────────────────────────────────────────────────────┘
          │              │              │            │
@@ -577,6 +583,7 @@ npm publish --access=public        # 用户级 ~/.npmrc 已存 token，免 OTP
 - [x] Bug 分析工作流
 - [x] Gerrit 推送与评论处理（已完全 MCP 化，替代外部 gerritpush）
 - [x] **智能 Commit Message 生成（commit-message-workflow + Branch_Detector 五级降级策略，基于 git diff + Zmind Issue 自动生成 [版本号][类型][whaletv][Zmind#ID]五段式）**
+- [x] **模块路径地图（module-path-map.md，覆盖 D4 / X5 / STB 三平台 ~90+ 业务子模块的精确路径前缀，AI 代码定位前先查地图缩小搜索范围）**
 - [x] Confluence 文档搜索集成
 - [x] 安全防护三层体系
 - [x] 首次配置引导流程（onboarding）

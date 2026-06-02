@@ -47,15 +47,28 @@ Issue 所属项目: [项目名]
 
 ## 搜索策略优先级
 
-### ① git grep 精确搜索（最高优先级，~0.4s）
+### ① 模块路径地图查表（最高优先级，零成本）
 
-**首选方式**。在当前代码库内精确搜索类名、方法名、字符串常量等。
+**首选方式**。从问题描述/异常堆栈中提取关键词（类名、模块名、功能名如 "TvScanConfig"、"TvSettings"、"PQ"、"CEC"、"DTVKit"、"Tuner"），到 `module-path-map.md` 的"典型问题 → 路径推荐对照表"或对应平台小节中查找路径前缀。
 
-### ② 读取已知路径文件（中等优先级，即时）
+命中后**立刻把路径前缀作为后续搜索的限定**，从全仓搜索退化到指定目录搜索。
+
+```bash
+# 命中 module-path-map → TvScanConfig 在 D4 上对应 vendor/amlogic/common/frameworks/
+git grep -n "TvScanConfig" -- "vendor/amlogic/common/frameworks/**/*.java"
+```
+
+未命中则降级到下一档。
+
+### ② git grep 精确搜索（~0.4s）
+
+在当前代码库内精确搜索类名、方法名、字符串常量等。既可全仓搜索，也可结合上一档的路径前缀做范围限定。
+
+### ③ 读取已知路径文件（即时）
 
 当已知文件路径时，直接读取文件获取完整上下文。
 
-### ③ OpenGrok 远程搜索（最低优先级）
+### ④ OpenGrok 远程搜索（最低优先级）
 
 仅在以下情况使用：
 - 本地 git grep 未返回结果
@@ -63,6 +76,8 @@ Issue 所属项目: [项目名]
 - 需要搜索符号定义位置
 
 使用 OpenGrok 时，在报告中标注"定位方式：OpenGrok"。
+
+> 💡 module-path-map 的路径前缀同样可以作为 OpenGrok 的 `path:` 限定符，把"全平台搜索"收窄到"指定模块搜索"。
 
 ## 为什么 git grep 优于 ripgrep
 
@@ -109,37 +124,28 @@ IF 当前分支不是预期的工作分支，THEN 提示用户确认是否需要
 
 ## 典型目录结构
 
+> 详细的模块到路径的映射、跨平台差异（D4 / X5 / STB）、典型问题对照表，请查看 `steering/module-path-map.md`。本节仅给出最粗粒度的速查印象。
+
+源码典型一级结构（以 D4 为例，X5 / STB 大同小异）：
+
 ```
 ~/cvte_code/amlogic/              # 源码根目录
-├── frameworks/
-│   ├── base/                     # Android Framework 核心
-│   │   ├── core/java/            # 核心 Java API
-│   │   ├── services/             # System Services
-│   │   └── packages/             # Framework 内置包
-│   └── av/                       # 多媒体框架
-├── packages/
-│   ├── apps/                     # 系统应用
-│   │   ├── TvSettings/           # TV 设置
-│   │   ├── LiveTv/               # 直播电视
-│   │   └── ...
-│   └── services/                 # 系统服务包
-├── vendor/
-│   └── amlogic/                  # Amlogic 厂商定制
-│       ├── common/
-│       └── ...
-├── hardware/
-│   └── amlogic/                  # HAL 层
+├── frameworks/                   # Android Framework
+├── packages/                     # 系统应用与库
+├── vendor/                       # 厂商定制（amlogic + zeasn/whale 业务）
+├── hardware/                     # HAL 层
 ├── kernel/                       # 内核源码
-└── device/
-    └── amlogic/                  # 设备配置
+└── device/                       # 设备/产品配置
 ```
 
-根据模块名快速定位子目录：
+**模块名 → 子目录的快速直觉**（精确路径见 module-path-map.md）：
+
 - Framework 相关 → `frameworks/base/`
 - 系统应用 → `packages/apps/`
-- 厂商定制 → `vendor/amlogic/`
+- 厂商定制（共性）→ `vendor/amlogic/common/`
+- WhaleTV 业务代码 → `vendor/zeasn/`（D4）或 `vendor/whale/`（X5 / STB）
 - HAL 层 → `hardware/amlogic/`
-- 内核 → `kernel/`
+- 内核 → `kernel/`（D4）或 `common/common14-5.15/`（X5）/ `common/common16-6.12/`（STB）
 - 设备配置 → `device/amlogic/`
 
 ## 跨代码库操作指南
@@ -169,10 +175,11 @@ THEN 提示用户：
 
 | 场景 | 处理方式 |
 |------|---------|
+| module-path-map 未命中 | 降级到全仓 git grep；同时记录到 `.learnings/LEARNINGS.md`（分类 `knowledge_gap`），用于补充 module-path-map |
 | git grep 无结果 | 降级到 OpenGrok `search_code` 或 `search_symbol` 搜索 |
 | 文件路径不存在 | 使用 git grep 重新搜索文件位置 |
 | 不在 git 仓库中 | 提示用户切换到源码目录 |
-| 搜索结果过多 | 添加文件类型限定（`-- "*.java"`）或更精确的关键词 |
+| 搜索结果过多 | 用 module-path-map 收窄路径前缀，或添加文件类型限定（`-- "*.java"`），或更精确的关键词 |
 | 搜索策略不够高效 | 记录到 `.learnings/LEARNINGS.md`（分类 `best_practice`），后续优化搜索策略 |
 
 

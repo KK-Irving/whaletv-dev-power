@@ -240,6 +240,9 @@ curl -s -u "<用户名>:<密码>" "https://opengrok.zeasn.com/api/v1/search?full
 • cultraview-dvb-amlogic-t950d4-2k-1g → ~/cvte_code/amlogic/
 • stm-amlogic-t962d4-4k-1-5gb → ~/cvte_code/stm/
 
+✨ 已自动启用：模块路径地图（D4 / X5 / STB 三平台 ~90+ 业务子模块的精确路径前缀）
+   AI 在分析问题、定位代码时会先查地图缩小搜索范围，避免大范围 grep。
+
 你现在可以：
 • "查看我的待办" — 获取 Issue 列表
 • "帮我处理 PR #12345" — 全链路 PR/CR 处理

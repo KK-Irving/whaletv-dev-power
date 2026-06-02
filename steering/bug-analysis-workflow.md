@@ -85,7 +85,13 @@
 
 ### ⑤ 本地代码定位
 
-**AI 动作**: 按照 local-code-guide 的搜索策略优先级，使用异常堆栈中的类名和方法名作为搜索关键词定位相关代码（① git grep → ② 读取已知路径 → ③ OpenGrok `search_symbol`）
+**AI 动作**: 按以下顺序定位代码：
+
+1. **先查模块路径地图**（`module-path-map.md`）：从异常信息/Issue 描述中提取关键词（类名、模块名、功能名如 "TvScanConfig"、"TvSettings"、"PQ"、"CEC"），在地图的"典型问题 → 路径推荐对照表"或对应平台小节中查找路径前缀
+2. 命中地图后，用路径前缀**限定搜索范围**：
+   - 本地：`git grep -n "ClassName" -- "<path-prefix>/**"`（去掉 wrapper 目录前缀，相对源码根）
+   - OpenGrok：`search_code` + 结果再筛 path 或 `search_path` 先收敛
+3. 未命中地图时，按 local-code-guide 的标准优先级（① git grep 全仓 → ② 读取已知路径 → ③ OpenGrok `search_symbol`）
 
 **预期输出**: 定位到相关代码的文件路径和行号
 
@@ -97,7 +103,7 @@
 定位方式：OpenGrok（本地 git grep 未匹配）
 ```
 
-**错误处理**: IF 两种方式均未找到结果，THEN 在报告中标注"未能定位到相关代码"，列出搜索过的关键词供用户参考
+**错误处理**: IF 两种方式均未找到结果，THEN 在报告中标注"未能定位到相关代码"，列出搜索过的关键词供用户参考；同时记录到 `.learnings/LEARNINGS.md`（分类 `knowledge_gap`），用于补充模块路径地图
 
 ### ⑥ 输出结构化分析报告
 
@@ -164,8 +170,8 @@
 | 约束 | 说明 |
 |------|------|
 | 附件识别规则 | 日志文件自动下载分析；压缩包/图片/视频展示信息后询问用户 |
-| 代码定位优先级 | 优先 `git grep`，无结果时再用 OpenGrok `search_symbol` |
+| 代码定位优先级 | ① 先查 `module-path-map` 缩小范围 → ② `git grep` 限定路径搜索 → ③ OpenGrok `search_symbol` 兜底 |
 | 报告格式 | 严格按四部分格式输出（现象、关键 Log、根因定位、修复建议） |
 | 关键 Log 长度 | 不超过 30 行 |
 | 修复建议数量 | 不超过 3 条 |
-| 定位方式标注 | 必须在报告中标注使用了 git grep 还是 OpenGrok |
+| 定位方式标注 | 必须在报告中标注使用了 module-path-map / git grep / OpenGrok 中哪种 |
