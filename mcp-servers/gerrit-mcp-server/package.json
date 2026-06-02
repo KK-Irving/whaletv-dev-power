@@ -1,7 +1,7 @@
 {
   "name": "@kk-irving/gerrit-mcp-server",
-  "version": "0.1.0",
-  "description": "Gerrit MCP Server for WhaleTV Developer Power",
+  "version": "0.3.0",
+  "description": "Gerrit MCP Server for WhaleTV Developer Power (SSH transport + NoteDb fetch for environments with nginx-fronted Basic Auth)",
   "type": "module",
   "bin": {
     "gerrit-mcp-server": "dist/index.js"

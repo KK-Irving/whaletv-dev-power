@@ -150,19 +150,26 @@ git add -p
 
 ### ⑧ 处理 Gerrit-AI 评论
 
-**AI 动作**: 通过 Gerrit MCP Server 的工具处理评论：
-1. 调用 `get_change_comments(change_id)` 拉取所有评论（已按时间升序排序）
-2. 逐条分析评论内容判断是否采纳
-3. 根据评论类型选择回复工具：
-   - **inline 评论**（含 path、line）→ 使用 `reply_inline_comment(change_id, parent_comment_id, message, unresolved=false)`（同时回复并 mark resolved）
-   - **review 级评论**（path/line 为空） → 使用 `add_review_comment(change_id, message)`，再单独调用 `mark_comment_resolved(change_id, comment_id)`
-4. 采纳：修复代码 → 回复修复说明 → 标记 resolved
-5. 不采纳：回复不采纳理由 → 标记 resolved
+**AI 动作**: 进入 `code-review-handling` steering 描述的 6 阶段流程：
 
-**关键约束**：每条评论必须 resolved（无论采纳或不采纳）
+1. `get_unresolved_threads({ change_id, author_id_filter: 1000192 })` 拉取所有未解决 thread（含 root_uuid）
+2. 单条评估：每条 thread 输出**封闭三态** `ACCEPT` / `REJECT` / `ACK` + 理由 + 修复方案
+3. 🔴 **CHECKPOINT**：表格展示评估结果，等 Developer 确认（CRITICAL 必须逐条人审）
+4. 仅对 ACCEPT 实做代码修改：read_file → str_replace → 单条 diff 确认 → git add -p
+5. push 新 patch set（amend 优先；push 失败**绝不**进入 ⑥）
+6. 单次 `submit_review_reply` 提交所有回复（含 in_reply_to + ACCEPT/REJECT/ACK 模板，ACK 保留 unresolved=true）
 
-**预期输出**: 所有 Gerrit-AI 评论已处理完毕，每条评论都有回复且标记为 resolved
-**错误处理**: IF 无法判断某条评论是否应采纳，THEN 向用户展示评论内容并请求指示
+**关键约束**：
+- 三态封闭：ACCEPT / REJECT / ACK，无第四种
+- ACK 保留 unresolved（建 Zmind follow-up），不允许靠 unresolved=false 假闭环
+- ACCEPT 必须先改代码 + push 再回复，否则是空头支票
+- ACCEPT 回复模板含 file + line + diff hunk 摘要；REJECT 必须含 evidence；ACK 必须含 follow-up Issue
+- CRITICAL 评论 AI 不可自主 ACCEPT/REJECT，强制 Developer 逐条审阅
+
+**详细步骤、模板、Don't 黑名单与异常处理见 `code-review-handling.md`**。
+
+**预期输出**: 所有评论按三态处理完毕；Web UI 上 unresolved 计数等于 ACK 数（0 if 全 ACCEPT/REJECT）；新 patch set 已 push 含实际修复
+**错误处理**: IF 任一步骤失败（评估歧义 / 修复冲突 / push 失败 / reply 失败），按 `code-review-handling.md` 章节 ⑩ 处理，等待 Developer 指示
 
 ### ⑨ 更新 Zmind
 

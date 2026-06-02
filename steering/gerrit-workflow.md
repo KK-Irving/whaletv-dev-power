@@ -65,34 +65,35 @@ Gerrit-AI 暂无评论（已轮询 3 次，间隔 15 秒），流程结束。
 
 **IF 有评论**:
 
-逐条分析 Gerrit-AI 评论，结合代码变更上下文判断是否采纳：
+进入 `code-review-handling` steering 描述的 6 阶段流程，对每条 unresolved 评论做**封闭三态**评估（`ACCEPT` / `REJECT` / `ACK`），仅 ACCEPT 实做代码修改 + push 新 patch set，最后单次 `submit_review_reply` 提交全部回复。
 
-#### 采纳评论
+简化版决策树：
 
-1. **修复代码**: 根据评论建议修改对应代码
-2. 执行代码自审（参见 code-review skill）确认修复无低级问题
-3. **回复修复说明**: 调用工具：
-   - **inline 评论** → `reply_inline_comment(change_id, parent_comment_id, message="已采纳，修复说明：[内容]", unresolved=false)` （同时回复并 mark resolved）
-   - **review 级评论** → `add_review_comment(change_id, message)` 后调用 `mark_comment_resolved(change_id, comment_id)`
-
-回复格式示例：
 ```
-已采纳，修复说明：[具体修复内容描述]
-```
-
-#### 不采纳评论
-
-1. **回复不采纳理由**: 调用工具：
-   - **inline 评论** → `reply_inline_comment(change_id, parent_comment_id, message="不采纳，理由：[原因]", unresolved=false)`
-   - **review 级评论** → `add_review_comment(change_id, message)` 后调用 `mark_comment_resolved(change_id, comment_id)`
-
-回复格式示例：
-```
-不采纳，理由：[具体不采纳原因]
+get_unresolved_threads({ change_id, author_id_filter: 1000192 })
+    ↓
+逐条评估（含读现场代码 + 严重梯度判定）
+    ↓
+🔴 CHECKPOINT：Developer 审阅评估表
+    ↓
+ACCEPT → 改代码 → git add -p → push 新 patch set → 回复模板含 file+line+diff
+REJECT → 不改代码 → 回复模板含 evidence
+ACK    → 不改代码 → 建 Zmind follow-up → 回复模板含 follow-up Issue → unresolved=true 保留
+    ↓
+submit_review_reply 单次原子提交所有回复
+    ↓
+get_unresolved_threads 验证：unresolved 计数 == ACK 数
 ```
 
-**预期输出**: 所有 Gerrit-AI 评论已逐条处理完毕，每条评论都有回复且标记为 resolved
-**错误处理**: IF 无法判断某条评论是否应采纳，THEN 向用户展示评论内容并请求指示
+**关键约束**：
+- ACCEPT 必须先 push 新 patch set 再回复（否则是假闭环）
+- ACK 保留 unresolved=true（不允许 unresolved=false 把 follow-up 隐藏）
+- CRITICAL 评论 AI 不可自主决定，Developer 必须逐条审
+
+**详细评估算法、回复模板、Don't 黑名单见 `code-review-handling.md`**。
+
+**预期输出**: 所有评论按三态处理；Web UI unresolved 计数 == ACK 数；新 patch set 已 push 含实际修复
+**错误处理**: IF 评估歧义 / 修复冲突 / push 失败 / reply 失败，按 `code-review-handling.md` 章节 ⑩ 处理
 
 ## 错误恢复
 

@@ -1,93 +1,92 @@
 /**
- * Gerrit 读操作工具集。
+ * Gerrit 读操作工具集 (SSH 通道)。
  *
- * 暴露 4 个工具函数（在 src/index.ts 中注册为 MCP 工具）：
- *   - queryChange:        GET /changes/{id}?o=CURRENT_REVISION&o=DETAILED_LABELS
- *   - listBranches:       GET /projects/{project}/branches/
- *   - getChangeComments:  GET /changes/{id}/comments + GET /changes/{id}/messages
- *   - searchChanges:      GET /changes/?q={query}&n={limit}
+ * 因 nginx 双层认证导致 REST `/a/...` 不可用，本模块改走 SSH 通道：
+ *   - queryChange:        ssh ... gerrit query --current-patch-set --commit-message change:<id>
+ *   - listBranches:       git ls-remote --heads ssh://...:29418/<project>
+ *   - getChangeComments:  ssh ... gerrit query --current-patch-set --comments change:<id>
+ *   - searchChanges:      ssh ... gerrit query --format=JSON <query> limit:N
  *
- * 设计要点：
- *   - 路径参数（change_id、project）通过 `encodeURIComponent` 编码，覆盖 `~` `+` `@` 等 Gerrit 三元组特殊字符
- *   - commit message 中 `Zmind#(\d+)` 全局正则提取 issue_id 列表；多个匹配按出现顺序保留（不去重）
- *   - `list_branches` 空匹配返回 `[]` 而非抛异常（Property 6）；调用方在 index.ts 注册时拼接 note
- *   - `get_change_comments` 合并 inline 评论 + review 级 messages，按 created 升序排序，
- *     时间相同时按 id 字典序作次级排序（Property 7）
- *   - HTTP 错误（401/403/404/5xx）由底层 `gerritGet` 透传 StructuredError；本层不重新封装
- *     （Property 5 的标识符注入由 `wrapToolHandler` 在 index.ts 注册时统一处理）
+ * 限制（与 REST 实现的差异）：
+ *   - get_change_comments 缺失 `uuid` / `unresolved` / `in_reply_to` 字段（SSH `gerrit query --comments` 不返回）
+ *     - 显示 / 阅读评论 → 完全够用
+ *     - 程序化 reply / mark resolved → 在 reply_inline_comment / mark_comment_resolved 工具用 file+line anchor 替代 uuid
+ *   - inline 评论的位置以 `/PATCHSET_LEVEL` 标识 patchset-level 评论（无具体行号）
+ *
+ * 行为契约保留（与 REST 版本一致）：
+ *   - listBranches 空匹配返回 `[]` 与 note（Property 6）
+ *   - getChangeComments 按 created/timestamp 升序，时间相同按 id 字典序（Property 7）
+ *   - 错误消息保留 change_id / project / pattern 标识符（Property 5，由 wrapToolHandler 注入）
  */
 
-import { gerritGet } from "../http-client.js";
+import { sshGerritJson, sshGitLsRemote, requireSshConfig } from "../ssh-client.js";
+import { StructuredError } from "../errors.js";
 import type { GerritBranch, GerritChange, GerritComment } from "../types.js";
 
 // =============================================================================
-// Gerrit 响应模型（仅取本工具用到的字段）
+// Gerrit query SSH 输出模型
 // =============================================================================
 
 /**
- * Gerrit ChangeInfo 响应。
+ * `gerrit query --format=JSON --current-patch-set --commit-message change:<id>` 的输出结构。
  *
- * 文档：https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#change-info
- *
- * 字段语义：
- *   - id:               project~branch~Change-Id 三元组（URL 编码后的）
- *   - change_id:        仅 Change-Id（如 Ixxx...）
- *   - _number:          Change 数字编号
- *   - current_revision: 当前 revision 的 commit SHA-1
- *   - revisions:        各 revision 信息字典（key 是 commit SHA）
+ * 字段对照（SSH 与 REST 字段命名差异）：
+ *   - SSH `id`           = REST `change_id`（仅 Change-Id）
+ *   - SSH `number`       = REST `_number`（数字编号）
+ *   - SSH `commitMessage`= REST `revisions[current].commit.message`
+ *   - SSH `currentPatchSet.number`  = REST `revisions[current]._number`
+ *   - SSH `currentPatchSet.revision`= REST `current_revision`
  */
-interface GerritChangeInfo {
-  id: string;
-  change_id: string;
-  _number: number;
-  subject: string;
-  status: string;
+interface GerritSshChange {
   project: string;
   branch: string;
+  /** 即 Change-Id（Ixxx...）；不是 REST 的 project~branch~Change-Id 三元组。 */
+  id: string;
+  number: number;
+  subject: string;
+  status: string;
   topic?: string;
-  owner?: { _account_id?: number; name?: string; email?: string };
-  current_revision?: string;
-  revisions?: Record<string, GerritRevisionInfo>;
+  owner?: { username?: string; name?: string; email?: string };
+  url?: string;
+  commitMessage?: string;
+  createdOn?: number;
+  lastUpdated?: number;
+  open?: boolean;
+  /** review 级评论（不含 inline 内容；inline 在 currentPatchSet.comments）。 */
+  comments?: GerritSshReviewMessage[];
+  currentPatchSet?: {
+    number: number;
+    revision: string;
+    ref?: string;
+    uploader?: { username?: string };
+    createdOn?: number;
+    /** 当 query 带 --comments 时，inline 评论会出现在这里。 */
+    comments?: GerritSshInlineComment[];
+  };
 }
 
-interface GerritRevisionInfo {
-  _number?: number;
-  commit?: { message?: string };
-  ref?: string;
-}
-
-interface GerritBranchInfo {
-  ref: string;
-  revision: string;
-  /** Gerrit 在某些版本中提供 `web_links`、`can_delete` 等字段；仅取必要字段。 */
-}
-
-/** Gerrit `GET /changes/{id}/comments` 响应：以文件路径为 key 的 comment 列表字典。 */
-type GerritCommentMap = Record<string, GerritCommentInfo[]>;
-
-interface GerritCommentInfo {
-  id: string;
-  /** ISO 8601 时间字符串。 */
-  updated?: string;
-  /** Gerrit 实际返回 created 字段，但部分版本仅提供 updated。 */
-  created?: string;
-  message?: string;
-  unresolved?: boolean;
-  line?: number;
-  patch_set?: number;
-  in_reply_to?: string;
-  author?: { _account_id?: number; name?: string; email?: string };
-}
-
-interface GerritChangeMessageInfo {
-  id: string;
-  date: string; // ISO 8601
+/** SSH query --comments 返回的 review 级评论。 */
+interface GerritSshReviewMessage {
+  /** Unix 秒级时间戳。 */
+  timestamp?: number;
+  reviewer?: { username?: string; name?: string; email?: string };
   message: string;
-  _revision_number?: number;
-  author?: { _account_id?: number; name?: string; email?: string };
-  /** Gerrit `tag` 字段标记机器生成评论（如 `autogenerated:gerrit:newPatchSet`），本工具不过滤 */
-  tag?: string;
 }
+
+/** SSH query --comments 返回的 inline 评论；缺 uuid/unresolved/in_reply_to。 */
+interface GerritSshInlineComment {
+  /** 文件路径，或 `/PATCHSET_LEVEL`。 */
+  file: string;
+  /** 行号；patchset-level 评论为 0。 */
+  line: number;
+  reviewer?: { username?: string; name?: string; email?: string };
+  message: string;
+  /** Unix 秒级时间戳；query --comments 不一定返回。 */
+  timestamp?: number;
+}
+
+/** SSH `git ls-remote` 返回的最末尾 stats 行。 */
+type GerritSshStats = Record<string, unknown> & { type: "stats"; rowCount: number };
 
 // =============================================================================
 // 内部辅助
@@ -97,7 +96,6 @@ interface GerritChangeMessageInfo {
 function extractZmindIssueIds(commitMessage: string | undefined | null): number[] {
   if (typeof commitMessage !== "string" || commitMessage.length === 0) return [];
   const ids: number[] = [];
-  // /g 标志保证 matchAll 返回所有匹配；不去重，保留 commit message 中的实际出现顺序
   for (const m of commitMessage.matchAll(/Zmind#(\d+)/g)) {
     const id = parseInt(m[1], 10);
     if (Number.isFinite(id)) ids.push(id);
@@ -105,58 +103,59 @@ function extractZmindIssueIds(commitMessage: string | undefined | null): number[
   return ids;
 }
 
-/** 拼接 Gerrit Change Web URL。 */
-function buildChangeWebUrl(project: string, changeNumber: number): string {
-  const baseUrl = (process.env.GERRIT_URL ?? "").replace(/\/+$/, "");
-  // 若未配置 GERRIT_URL（理论不可达，因为 gerritGet 已校验），仍返回相对路径以避免空字符串拼接
-  const projectSegment = encodeURI(project);
-  return `${baseUrl}/c/${projectSegment}/+/${changeNumber}`;
-}
-
-/**
- * 从 Gerrit ChangeInfo 中提取当前 patch set 编号。
- *
- * 优先 `revisions[current_revision]._number`；缺失时回退 0（design 9: GerritChange.current_patch_set）。
- */
-function extractCurrentPatchSet(info: GerritChangeInfo): number {
-  if (info.current_revision && info.revisions) {
-    const rev = info.revisions[info.current_revision];
-    if (rev && typeof rev._number === "number") return rev._number;
+/** 拼接 Gerrit Change Web URL，优先使用 SSH 输出中的 url，回退到拼接形式。 */
+function buildChangeWebUrl(
+  info: GerritSshChange,
+  fallbackBaseUrl: string,
+): string {
+  if (typeof info.url === "string" && info.url.length > 0) {
+    return info.url;
   }
-  return 0;
+  const base = fallbackBaseUrl.replace(/\/+$/, "");
+  return `${base}/c/${encodeURI(info.project)}/+/${info.number}`;
 }
 
-/**
- * 把 Gerrit ChangeInfo 映射为本服务的 GerritChange 类型。
- *
- * @param info   Gerrit 原始响应
- * @param commitMessage  当前 revision 的 commit message（可选；无则 zmind_issue_ids 为空数组）
- */
-function mapToGerritChange(info: GerritChangeInfo, commitMessage?: string): GerritChange {
-  const message =
-    commitMessage ??
-    (info.current_revision && info.revisions
-      ? info.revisions[info.current_revision]?.commit?.message
-      : undefined);
+/** Unix 秒级时间戳转 ISO 8601 字符串；缺失返回空串。 */
+function toIso(unix: number | undefined): string {
+  if (typeof unix !== "number" || !Number.isFinite(unix)) return "";
+  return new Date(unix * 1000).toISOString();
+}
+
+/** 把 GerritSshChange 映射为 GerritChange。 */
+function mapToGerritChange(
+  info: GerritSshChange,
+  baseUrl: string,
+): GerritChange {
+  const status = (info.status === "MERGED"
+    ? "MERGED"
+    : info.status === "ABANDONED"
+      ? "ABANDONED"
+      : "NEW") as GerritChange["status"];
 
   return {
+    // SSH 不返回 project~branch~Change-Id 三元组；用 Change-Id 字符串作为 id
     id: info.id,
-    change_id: info.change_id,
-    number: info._number,
+    change_id: info.id,
+    number: info.number,
     subject: info.subject,
-    status: (info.status as GerritChange["status"]) ?? "NEW",
+    status,
     project: info.project,
     branch: info.branch,
     topic: info.topic,
     owner: {
-      name: info.owner?.name ?? "",
+      name: info.owner?.name ?? info.owner?.username ?? "",
       email: info.owner?.email,
     },
-    current_revision: info.current_revision,
-    current_patch_set: extractCurrentPatchSet(info),
-    zmind_issue_ids: extractZmindIssueIds(message),
-    web_url: buildChangeWebUrl(info.project, info._number),
+    current_revision: info.currentPatchSet?.revision,
+    current_patch_set: info.currentPatchSet?.number ?? 0,
+    zmind_issue_ids: extractZmindIssueIds(info.commitMessage),
+    web_url: buildChangeWebUrl(info, baseUrl),
   };
+}
+
+/** 拿到 Gerrit Web 基础 URL（仅用于构造 Change URL）；缺失时返回空字符串。 */
+function getBaseUrl(): string {
+  return (process.env.GERRIT_URL ?? "").replace(/\/+$/, "");
 }
 
 // =============================================================================
@@ -164,60 +163,85 @@ function mapToGerritChange(info: GerritChangeInfo, commitMessage?: string): Gerr
 // =============================================================================
 
 /**
- * 查询单个 Gerrit Change 的详情。
+ * 查询单个 Gerrit Change 详情（SSH 通道）。
  *
- * @param changeId Change-Id 字符串（Ixxx...）、Change Number 或 project~branch~changeId 三元组。
- *                 调用方负责非空校验（zod schema `min(1)`）。
- *
- * @returns 完整的 GerritChange，包含从 commit message 提取的 zmind_issue_ids。
- * @throws  StructuredError 由底层 gerritGet 透传（401/403/404/timeout/network 等）
+ * @throws StructuredError("not_found") 当 query 返回 0 条业务行（rowCount=0）
  */
 export async function queryChange(changeId: string): Promise<GerritChange> {
-  const path = `/changes/${encodeURIComponent(changeId)}?o=CURRENT_REVISION&o=DETAILED_LABELS`;
-  const info = await gerritGet<GerritChangeInfo>(path);
-  return mapToGerritChange(info);
+  const { rows, stats } = await sshGerritJson<GerritSshChange>([
+    "gerrit",
+    "query",
+    "--format=JSON",
+    "--current-patch-set",
+    "--commit-message",
+    `change:${escapeQueryToken(changeId)}`,
+  ]);
+
+  if (rows.length === 0) {
+    const rowCount =
+      typeof stats?.rowCount === "number" ? (stats.rowCount as number) : 0;
+    throw new StructuredError(
+      "not_found",
+      `Change 不存在或不可见: change_id=${changeId} (rowCount=${rowCount})`,
+      404,
+    );
+  }
+
+  // gerrit query change:<id> 通常返回 1 条；若多条则取第一条
+  return mapToGerritChange(rows[0], getBaseUrl());
+}
+
+/**
+ * 转义 Gerrit query token：去掉首尾空白；不允许包含空格 / 引号 / 反引号。
+ *
+ * Gerrit query 语法对 token 中的特殊字符敏感；调用方传入的 changeId 一般是
+ * 数字、Change-Id 或三元组，本函数仅做基础防御。
+ */
+function escapeQueryToken(token: string): string {
+  const trimmed = token.trim();
+  if (/[\s`"'\\]/.test(trimmed)) {
+    throw new StructuredError(
+      "internal_error",
+      `查询参数包含非法字符（不允许空格、引号、反引号、反斜杠）: ${trimmed}`,
+    );
+  }
+  return trimmed;
 }
 
 // =============================================================================
 // 2. listBranches
 // =============================================================================
 
-/** list_branches 在空匹配时返回的特殊响应（与 GerritBranch[] 平级供 wrapper 直接序列化）。 */
 export interface ListBranchesResult {
   branches: GerritBranch[];
-  /** 当 pattern 提供且匹配为空时，附加说明。 */
   note?: string;
 }
 
 /**
- * 列出指定 project 的分支，最多 500 条；当 pattern 提供时进行客户端 substring 过滤（大小写敏感）。
+ * 列出指定 project 的分支（SSH 通道：git ls-remote）。
  *
- * @param project Gerrit project 名（必需，非空由 zod 校验）
- * @param pattern 可选过滤模式（substring 匹配），未提供时返回全部分支
- *
- * @returns ListBranchesResult；空匹配时 branches=[] 且附带 note（Property 6）
- * @throws  StructuredError 由底层 gerritGet 透传（404 = project 不存在等）
+ * 行为与 REST 版一致：
+ *   - 客户端 substring 过滤（大小写敏感）
+ *   - 最多 500 条
+ *   - 空匹配返回 [] + note（Property 6）
  */
 export async function listBranches(
   project: string,
   pattern?: string,
 ): Promise<ListBranchesResult> {
-  const path = `/projects/${encodeURIComponent(project)}/branches/`;
-  const all = await gerritGet<GerritBranchInfo[]>(path);
+  const all = await sshGitLsRemote(project);
 
-  // 防御：Gerrit 在某些异常状态下可能返回 null 而非数组
-  const safeAll: GerritBranchInfo[] = Array.isArray(all) ? all : [];
-
-  // 客户端过滤：substring 匹配（大小写敏感）；500 条上限按 ref 序列截断
   const filtered = pattern
-    ? safeAll.filter((b) => typeof b.ref === "string" && b.ref.includes(pattern))
-    : safeAll;
+    ? all.filter((b) => b.ref.includes(pattern))
+    : all;
   const capped = filtered.slice(0, 500);
 
   const branches: GerritBranch[] = capped.map((b) => ({
     ref: b.ref,
     revision: b.revision,
-    name: b.ref.startsWith("refs/heads/") ? b.ref.slice("refs/heads/".length) : b.ref,
+    name: b.ref.startsWith("refs/heads/")
+      ? b.ref.slice("refs/heads/".length)
+      : b.ref,
   }));
 
   if (pattern && branches.length === 0) {
@@ -226,7 +250,6 @@ export async function listBranches(
       note: `no branches matched the pattern: ${pattern}`,
     };
   }
-
   return { branches };
 }
 
@@ -235,71 +258,89 @@ export async function listBranches(
 // =============================================================================
 
 /**
- * 获取一个 Change 的全部评论（inline + review 级），合并后按时间升序排序。
+ * 获取一个 Change 的全部评论（review + inline，SSH 通道）。
  *
- * 调用 Gerrit 两个端点：
- *   1. GET /changes/{id}/comments  → 文件路径分组的 inline 评论 map
- *   2. GET /changes/{id}/messages  → review 级 messages 列表（path/line 字段缺失）
+ * 与 REST 版的差异：
+ *   - inline 评论的 `id` 字段由 `<file>:<line>:<timestamp_or_hash>` 合成
+ *     （SSH 不返回 uuid；合成 id 用于 GerritComment.id 字段填充，保证排序稳定）
+ *   - `unresolved` 字段缺失，统一填 false（SSH 不返回；上层若要判断未解决数量，
+ *     需要从 query.message 中正则提取，例如 "Patch Set N: ... (M comments)"）
+ *   - `in_reply_to` 字段始终 undefined
  *
- * 排序规则（Property 7）：
- *   1. 主键：created 字符串（ISO 8601 升序，同字符串字典序即时间序）
- *   2. 次级：id 字典序（确保同时间戳评论顺序稳定）
- *
- * @throws StructuredError 由底层 gerritGet 透传
+ * @throws StructuredError("not_found") 当 query 返回 0 条业务行
  */
-export async function getChangeComments(changeId: string): Promise<GerritComment[]> {
-  const encodedId = encodeURIComponent(changeId);
-
-  const [commentsMap, messages] = await Promise.all([
-    gerritGet<GerritCommentMap>(`/changes/${encodedId}/comments`),
-    gerritGet<GerritChangeMessageInfo[]>(`/changes/${encodedId}/messages`),
+export async function getChangeComments(
+  changeId: string,
+): Promise<GerritComment[]> {
+  const { rows, stats } = await sshGerritJson<GerritSshChange>([
+    "gerrit",
+    "query",
+    "--format=JSON",
+    "--current-patch-set",
+    "--comments",
+    `change:${escapeQueryToken(changeId)}`,
   ]);
 
-  const merged: GerritComment[] = [];
-
-  // ① 合并 inline 评论：把 commentsMap 拍平为单个数组，每条加上 path 字段
-  if (commentsMap && typeof commentsMap === "object") {
-    for (const [path, list] of Object.entries(commentsMap)) {
-      if (!Array.isArray(list)) continue;
-      for (const c of list) {
-        merged.push({
-          id: c.id,
-          author: {
-            name: c.author?.name ?? "",
-            email: c.author?.email,
-          },
-          // Gerrit 实际返回 `updated` 字段，但 design.md GerritComment.created 沿用此值
-          created: c.updated ?? c.created ?? "",
-          message: c.message ?? "",
-          unresolved: c.unresolved === true,
-          path,
-          line: c.line,
-          patch_set: c.patch_set,
-          in_reply_to: c.in_reply_to,
-        });
-      }
-    }
+  if (rows.length === 0) {
+    const rowCount =
+      typeof stats?.rowCount === "number" ? (stats.rowCount as number) : 0;
+    throw new StructuredError(
+      "not_found",
+      `Change 不存在或不可见: change_id=${changeId} (rowCount=${rowCount})`,
+      404,
+    );
   }
 
-  // ② 合并 review 级 messages：path/line 字段缺省（review 评论不归属具体文件）
-  if (Array.isArray(messages)) {
-    for (const m of messages) {
+  const change = rows[0];
+  const merged: GerritComment[] = [];
+
+  // ① review 级 messages
+  if (Array.isArray(change.comments)) {
+    for (let i = 0; i < change.comments.length; i++) {
+      const c = change.comments[i];
+      const isoTime = toIso(c.timestamp);
       merged.push({
-        id: m.id,
+        // SSH 不返回 message id；用 timestamp + index 合成稳定 id 用于排序
+        id: `review:${c.timestamp ?? "?"}:${i}`,
         author: {
-          name: m.author?.name ?? "",
-          email: m.author?.email,
+          name: c.reviewer?.name ?? c.reviewer?.username ?? "",
+          email: c.reviewer?.email,
         },
-        created: m.date ?? "",
-        message: m.message,
-        unresolved: false, // review 级 message 无 unresolved 概念
-        // path/line 故意省略，保持 GerritComment 类型可选字段为 undefined
-        patch_set: m._revision_number,
+        created: isoTime,
+        message: c.message ?? "",
+        unresolved: false,
       });
     }
   }
 
-  // ③ 按时间升序，相同时间按 id 字典序
+  // ② inline 评论（patchset-level 用 /PATCHSET_LEVEL 标识）
+  const inlineList = change.currentPatchSet?.comments;
+  if (Array.isArray(inlineList)) {
+    for (let i = 0; i < inlineList.length; i++) {
+      const c = inlineList[i];
+      const isoTime = toIso(c.timestamp);
+      const isPatchsetLevel = c.file === "/PATCHSET_LEVEL";
+      merged.push({
+        // 合成 id：file + line + index 保证稳定
+        id: `inline:${c.file}:${c.line}:${i}`,
+        author: {
+          name: c.reviewer?.name ?? c.reviewer?.username ?? "",
+          email: c.reviewer?.email,
+        },
+        created: isoTime,
+        message: c.message ?? "",
+        unresolved: false,
+        // patchset-level 评论保留 path="/PATCHSET_LEVEL" 让上层识别它是 inline 而非 review
+        // line 在 patchset-level 上保留 0（与 SSH 输出一致），便于上层把这条 path+line
+        // 直接喂给 submit_review_reply 工具（patchset-level 不传 line 由工具内部处理）
+        path: c.file,
+        line: c.line,
+        patch_set: change.currentPatchSet?.number,
+      });
+    }
+  }
+
+  // ③ 升序：created 主键，相同时 id 字典序
   merged.sort((a, b) => {
     if (a.created < b.created) return -1;
     if (a.created > b.created) return 1;
@@ -316,27 +357,35 @@ export async function getChangeComments(changeId: string): Promise<GerritComment
 // =============================================================================
 
 /**
- * 按 Gerrit 查询语法搜索 Change（如 `topic:332669 status:merged branch:master`）。
+ * 按 Gerrit 查询语法搜索 Change（SSH 通道）。
  *
  * @param query Gerrit search syntax 字符串
  * @param limit 返回数量上限（默认 25，最大 100；上限由 zod schema 在 index.ts 强制）
  *
- * @returns 映射后的 GerritChange 数组；未提供 CURRENT_REVISION 选项时部分字段（current_revision、
- *          current_patch_set、zmind_issue_ids）可能为空/0/[]，与 design.md 约定一致（搜索场景不需详情）
- * @throws  StructuredError 由底层 gerritGet 透传
+ * 安全性：query 直接作为 ssh args 中的参数，由 child_process.spawn 数组形式传递，
+ * 不经 shell 解释，无注入风险。但 query 字符串内部仍按 Gerrit 自己的 query 语法
+ * 解析，调用方负责构造合法 query。
  */
 export async function searchChanges(
   query: string,
   limit: number = 25,
 ): Promise<GerritChange[]> {
-  // Gerrit `n` 参数控制返回数量；不指定 `o=CURRENT_REVISION` 以保持响应轻量（搜索结果常用于"列表展示"场景）
-  const params = new URLSearchParams();
-  params.set("q", query);
-  params.set("n", String(limit));
-  const path = `/changes/?${params.toString()}`;
+  // ssh 参数中 query 与 limit:N 作为 trailing args
+  // gerrit query 接受多个空格分隔的 token，所以 spawn 数组形式天然分割正确
+  const args = [
+    "gerrit",
+    "query",
+    "--format=JSON",
+    "--current-patch-set",
+    "--commit-message",
+    ...query.split(/\s+/).filter((s) => s.length > 0),
+    `limit:${limit}`,
+  ];
 
-  const list = await gerritGet<GerritChangeInfo[]>(path);
-  if (!Array.isArray(list)) return [];
-
-  return list.map((info) => mapToGerritChange(info));
+  const { rows } = await sshGerritJson<GerritSshChange>(args);
+  const baseUrl = getBaseUrl();
+  return rows.map((r) => mapToGerritChange(r, baseUrl));
 }
+
+// 触发 requireSshConfig 在模块导入时不执行（保持懒加载语义）；导出供测试使用
+export { requireSshConfig };

@@ -30,19 +30,20 @@ whaletv-dev-power/
 │   │   ├── package.json
 │   │   ├── tsconfig.json
 │   │   └── src/index.ts                  # 4 个工具实现
-│   └── gerrit-mcp-server/                # Gerrit REST 集成（12 个工具）
+│   └── gerrit-mcp-server/                # Gerrit SSH + NoteDb 集成（14 个工具）
 │       ├── package.json
 │       ├── tsconfig.json
-│       └── src/                          # 4 读 + 8 写工具实现
-│           ├── index.ts                  # MCP server 入口与 12 工具注册
-│           ├── auth.ts | http-client.ts | errors.ts | types.ts
-│           └── tools/                    # query / cherry-pick / push / comment / reviewer
+│       └── src/                          # 5 读 + 9 写工具实现
+│           ├── index.ts                  # MCP server 入口与 14 工具注册
+│           ├── ssh-client.ts | note-db.ts | http-client.ts | auth.ts | errors.ts | types.ts
+│           └── tools/                    # query / threads / cherry-pick / push / comment / reviewer
 ├── steering/
 │   ├── onboarding.md                     # 首次配置引导流程
 │   ├── pr-cr-workflow.md                 # PR/CR 处理工作流（9 步）
 │   ├── cherry-pick-workflow.md           # Cherry-Pick 同步工作流
 │   ├── bug-analysis-workflow.md          # Bug 分析工作流
 │   ├── gerrit-workflow.md                # Gerrit 推送与评论处理
+│   ├── code-review-handling.md           # Gerrit-AI / reviewer 评论的三态处理（ACCEPT/REJECT/ACK）
 │   ├── commit-message-workflow.md        # 智能 Commit Message 生成 + Branch_Detector
 │   ├── local-code-guide.md              # 本地源码操作指南
 │   └── safety-rules.md                  # 安全规则（三层防护）
@@ -73,15 +74,17 @@ whaletv-dev-power/
 | 1 | **Zmind 项目管理** | 15 个 MCP 工具，覆盖 Issue 全生命周期管理 + 附件下载 |
 | 2 | **OpenGrok 代码搜索** | 4 个 MCP 工具，远程搜索公版代码（只读，辅助分析） |
 | 3 | **PR/CR 全链路处理** | 9 步标准流程：获取 Issue → 修改代码 → 推送 Gerrit → 更新状态 |
-| 4 | **Cherry-Pick 同步** | 批量 CP 到 MP 分支，自动发现目标分支，分类汇报结果 |
+| 4 | **Cherry-Pick 同步** | 批量发现 + 引导：search_changes 检索 master 已合入 → list_branches 发现 MP 分支 → 展示计划 → cherry_pick_change 返回 Web UI 链接 + 操作步骤（高风险不自动执行）→ 收集 Developer 回报 |
 | 5 | **Bug 自动分析** | 日志解析 + 异常提取 + 代码定位 + 结构化报告 |
-| 6 | **Gerrit 集成** | Gerrit MCP（12 工具）查询 Change/分支/评论、push_to_gerrit 推送、cherry-pick 三态分类、处理 Gerrit-AI 评论 |
+| 6 | **Gerrit 集成** | Gerrit MCP（14 工具：5 读 + 9 写）查询 Change/分支、批量评论 REPLY（submit_review_reply）、push_to_gerrit 推送、cherry-pick 引导（高风险走 Web UI）、Reviewer/Label 管理；走 SSH 通道（端口 29418）+ NoteDb meta ref（拿评论 uuid 用于 thread 闭环） |
 | 7 | **内部文档查询** | Confluence CQL 搜索，自动关联已知问题和设计文档 |
 | 8 | **安全防护** | 三层体系：规则约束 + Hook 拦截 + 人工确认 |
 | 9 | **项目-代码匹配** | Zmind 项目自动映射到本地代码路径 |
 | 10 | **自我进化** | find-skill（能力发现）+ skill-creator（能力创建）+ self-improving（经验沉淀） |
 | 11 | **先设计再编码** | 复杂修改前自动触发方案探索，减少返工 |
 | 12 | **代码自审** | 提交前自动检查质量，减少 Gerrit-AI 评论轮次 |
+| 13 | **Code Review 处理工作流** | Gerrit-AI / reviewer 评论的三态评估闭环（ACCEPT / REJECT / ACK）：get_unresolved_threads 拿 thread + UUID → AI 单条评估 + 用户审阅 → ACCEPT 必须先改代码 + push 新 patch set 才能回复（防假闭环）→ submit_review_reply 单次原子提交 |
+| 14 | **智能 Commit Message 生成** | 基于 git diff + Zmind Issue + Branch_Detector 五级降级（upstream / branch.merge / .gitreview / Change-Id 反查 / 询问 Developer）自动生成 `[版本号][类型][whaletv][Zmind#ID]` 五段式 commit message |
 
 ### Zmind MCP Server 工具列表（15 个）
 
@@ -405,8 +408,9 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 │  MCP Server 层:                                          │
 │  ├── zmind-mcp-server (15 tools) ──→ Zmind (Redmine)    │
 │  ├── opengrok-mcp-server (4 tools) ──→ OpenGrok          │
-│  └── gerrit-mcp-server (12 tools) ──→ Gerrit REST       │
-│         (4 读 + 8 写：cherry-pick / push / comment / reviewer) │
+│  └── gerrit-mcp-server (14 tools) ──→ Gerrit SSH:29418  │
+│         (5 读 + 9 写：query / threads / cherry-pick guidance / push / │
+│          submit_review_reply / comment / reviewer / label)│
 │                                                          │
 │  Skill 层（HTTP 直接调用）:                                │
 │  └── internal-docs ──→ Confluence (REST API)            │
@@ -416,6 +420,7 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 │  ├── cherry-pick-workflow                                │
 │  ├── bug-analysis-workflow                               │
 │  ├── gerrit-workflow                                     │
+│  ├── code-review-handling（三态评估：ACCEPT/REJECT/ACK） │
 │  ├── commit-message-workflow（智能 Commit + Branch_Detector）│
 │  └── safety-rules (三层防护)                              │
 └─────────────────────────────────────────────────────────┘
@@ -430,7 +435,7 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 | 系统 | 地址 | 认证方式 | 配置需提供 |
 |------|------|---------|-----------|
 | Zmind | https://zmind.whaletv.com | API Key | API 密钥 |
-| Gerrit | https://whale-gerrit.zeasn.com | HTTP Password（gerrit-mcp 走 REST） + SSH 公钥（push 工具走 git/SSH） | 用户名、HTTP Password |
+| Gerrit | https://whale-gerrit.zeasn.com | SSH 公钥（gerrit-mcp 走 SSH:29418；push_to_gerrit 走 git+SSH）+ HTTP Password（保留作 fallback） | 用户名、HTTP Password；SSH 公钥需上传到 Gerrit Settings |
 | Confluence | https://docs.whaletv.com | HTTP Basic Auth | 用户名、密码 |
 | OpenGrok | https://opengrok.zeasn.com | HTTP Basic Auth | 用户名、密码 |
 
@@ -498,7 +503,7 @@ cd ../gerrit-mcp-server && npx tsc --noEmit
 cd mcp-servers/zmind-mcp-server
 ZMIND_API_KEY=your_key npx @modelcontextprotocol/inspector npx tsx src/index.ts
 
-# Gerrit（4 读 + 8 写工具）
+# Gerrit（5 读 + 9 写工具，主通道走 SSH 端口 29418）
 cd mcp-servers/gerrit-mcp-server
 GERRIT_URL=https://whale-gerrit.zeasn.com GERRIT_USERNAME=user GERRIT_HTTP_PASSWORD=token \
   npx @modelcontextprotocol/inspector npx tsx src/index.ts
@@ -528,8 +533,9 @@ npm publish --access=public        # 用户级 ~/.npmrc 已存 token，免 OTP
 | @modelcontextprotocol/sdk 1.12.1 | MCP 协议框架 |
 | zod 3.24.4 | 运行时参数校验 |
 | stdio | MCP 传输协议 |
-| HTTPS (REST API) | Gerrit / OpenGrok / Confluence / Zmind 集成 |
-| git + SSH (端口 29418) | `push_to_gerrit` 工具内部用本地 git push 到 `refs/for/<branch>`（需 SSH 公钥已上传到 Gerrit） |
+| HTTPS (REST API) | OpenGrok / Confluence / Zmind 集成 |
+| SSH (端口 29418) | gerrit-mcp-server 主通道（gerrit query / gerrit review --json / gerrit set-reviewers） |
+| git + SSH (端口 29418) | `push_to_gerrit` 与 `get_unresolved_threads`（fetch NoteDb meta ref 拿 comment uuid） |
 | HTTP Basic Auth | Confluence / OpenGrok 鉴权 |
 | Kiro Steering | AI 工作流定义 |
 | Kiro Skills | AI 行为指导 |
@@ -541,7 +547,7 @@ npm publish --access=public        # 用户级 ~/.npmrc 已存 token，免 OTP
 │  whaletv-dev-power (本项目)                           │
 │  ├── zmind-mcp-server (15 tools) ← FAE Power 调用   │
 │  ├── opengrok-mcp-server (4 tools) ← FAE Power 调用    │
-│  ├── gerrit-mcp-server (12 tools) ← FAE Power 调用    │
+│  ├── gerrit-mcp-server (14 tools) ← FAE Power 调用    │
 │  └── steering/ (PR/CR/Cherry-Pick/Commit-Message — 开发者用)│
 └─────────────────────────────────────────────────────┘
          ↑ 提供 MCP 工具能力
@@ -565,7 +571,7 @@ npm publish --access=public        # 用户级 ~/.npmrc 已存 token，免 OTP
 ### ✅ Phase 1（已完成）
 - [x] Zmind MCP Server（15 个工具）
 - [x] OpenGrok MCP Server（4 个工具：全文搜索、符号搜索、路径搜索、文件内容获取）
-- [x] **Gerrit MCP Server（12 个工具：4 读 + 8 写，含 Cherry-Pick / push_to_gerrit / comment / reviewer / set_review_label）**
+- [x] **Gerrit MCP Server（14 个工具：5 读 + 9 写，含 SSH 通道 + NoteDb meta ref；submit_review_reply 批量回复 / get_unresolved_threads thread 闭环 / push_to_gerrit / comment / reviewer / set_review_label / cherry-pick guidance）**
 - [x] PR/CR 全链路工作流（9 步）
 - [x] Cherry-Pick 同步工作流
 - [x] Bug 分析工作流

@@ -1386,3 +1386,144 @@ node -e "const p = require('./package.json'); if (p.name !== '@kk-irving/gerrit-
 | Error Handling（错误分类矩阵 + 三态流程图 + 安全错误处理） | ✅ |
 | Testing Strategy（PBT + 单元 + 集成 + 冒烟 + Steering Review） | ✅ |
 | 性能、安全、依赖 | ✅ |
+
+
+---
+
+## Addendum 0.3.0 — SSH Transport + NoteDb + Three-State Review (2026-06)
+
+> 本附录记录 0.1.0 设计交付后的实运行环境验证、问题诊断与架构调整。**原文（前文）保留作 0.1.0 历史档案**，本附录是对 0.2.0 / 0.3.0 实运行决定的补充说明。
+
+### 1. 触发问题：nginx 双层认证（2026-06）
+
+部署环境 `whale-gerrit.zeasn.com` 在 Gerrit 前置了独立的 nginx Basic Auth（realm `Welcomme to Gerrit Code Review Site!`），与 Gerrit 自带的 HTTP 凭据校验（realm `Gerrit Code Review`）形成**双层认证**。HTTP 协议规定单次请求只能携带一个 `Authorization` 头，因此任何走 REST `/a/...` 的标准 HTTP 客户端都会 401，**包括** 0.1.0 实现的 gerrit-mcp-server。
+
+实证（Stage A-F 探针）：
+- nginx 不下发 cookie / session（`Set-Cookie: (none)`），因此"先访问 root 拿 session、再访问 /a/" 的两阶段 sidecar 方案**也不成立**
+- 仅浏览器因实现了 multi-realm Auth cache 能正常使用，普通 HTTP 客户端（curl / jgit / Jenkins / IDE 插件 / Gerrit MCP）都不可用
+
+修复路径优先级：
+1. **正解**（不可控）：联系 IT 把 nginx 的 `/a/*` 跳过 Basic Auth 或完全移除前置 Basic Auth
+2. **运行时绕路**（已实施）：把 gerrit-mcp-server 全量改走 SSH 通道（端口 29418，不经 nginx）
+
+### 2. 0.2.0 架构变化：SSH 通道
+
+**核心设计变化**：
+
+| 工具 | 0.1.0 通道（REST） | 0.2.0 通道（SSH） |
+|------|-------------------|---------------------|
+| `query_change` | `GET /a/changes/{id}?o=CURRENT_REVISION` | `ssh ... gerrit query --format=JSON --current-patch-set --commit-message change:<id>` |
+| `list_branches` | `GET /a/projects/{p}/branches/` | `git ls-remote --heads ssh://...:29418/<project>` |
+| `get_change_comments` | `GET /a/changes/{id}/comments` + `GET /a/changes/{id}/messages` | `ssh ... gerrit query --comments change:<id>` |
+| `search_changes` | `GET /a/changes/?q=...&n=...` | `ssh ... gerrit query --format=JSON <query> limit:N` |
+| `cherry_pick_change` | `POST /a/changes/{id}/revisions/current/cherrypick` | **manual_required**（Gerrit SSH 命令集无 cherry-pick 子命令） |
+| `push_to_gerrit` | （已是 SSH） | （不变） |
+| `add_review_comment` | `POST /a/changes/{id}/revisions/{rev}/review { message }` | `ssh ... gerrit review --json` with `{message, tag, notify}` 通过 stdin |
+| `reply_inline_comment` | `POST /a/.../review { comments: { [path]: [{ in_reply_to, line, message, unresolved }] } }` | 同上，但**接受 file+line anchor 而非 parent_comment_id**（SSH 不返回 comment uuid，签名变化） |
+| `mark_comment_resolved` | `POST /a/.../review { comments: { [path]: [{ in_reply_to, unresolved: false }] } }` | 同上，接受 file+line anchor |
+| `add_reviewer` | `POST /a/changes/{id}/reviewers { reviewer }` | `ssh ... gerrit set-reviewers --add <user> <change>` |
+| `remove_reviewer` | `DELETE /a/changes/{id}/reviewers/{id}` | `ssh ... gerrit set-reviewers --remove <user> <change>` |
+| `set_review_label` | `POST /a/.../review { labels }` | `ssh ... gerrit review --label NAME=VALUE <change,patchset>` |
+
+**新增模块**：
+- `src/ssh-client.ts` — spawn ssh + UTF-8 stdin buffer 注入、stderr → StructuredError 映射、`buildSshArgs(...)` 等
+- 保留 `src/http-client.ts` / `src/auth.ts` 作 dead code（IT 修好 nginx 后可零成本切回）
+
+**Property 影响**：
+- Property 1（Basic Auth round-trip）：不再被 SSH 路径调用，但保留实现
+- Property 2（`/a/` 前缀注入幂等）：不再被 SSH 路径调用
+- Property 3（XSSI 前缀剥离）：不再被 SSH 路径调用
+- Property 4（GERRIT_TIMEOUT_MS 解析）：仍生效（SSH 子进程超时复用此值）
+- Property 5（错误消息保留输入标识符）：仍生效（wrapToolHandler 注入路径不变）
+- Property 6（list_branches 空匹配）：仍生效
+- Property 7（get_change_comments 时间升序）：仍生效（SSH 输出排序逻辑保留）
+- Property 8 / 21（cherry-pick 三态分类）：**作废**，cherry_pick_change 退化为 manual_required
+- Property 9 / 10 / 11（push_to_gerrit）：仍生效
+- Property 12（评论文本空白校验）：仍生效
+- Property 13（set_review_label 值范围）：仍生效
+- Property 14（StructuredError 兜底枚举）：仍生效（mapSshError 复用同一封闭枚举）
+
+### 3. cherry_pick_change 的语义变化
+
+Gerrit SSH 命令集（截至 3.6.0）**没有** cherry-pick 子命令；REST 才有。因此 SSH 通道下：
+
+- 工具固定返回 `{ status: "manual_required", web_url, instructions }`
+- AI 把 web_url 给 Developer，由 Developer 在 Gerrit Web UI 手动完成
+- **不做客户端自动化**（`git fetch refs/changes/.../X && git cherry-pick && git push refs/for/<dest>` 在技术上能实现，但会丢失 `cherryPickOfChange` 元数据，破坏 Gerrit 的 cherry-pick 链路追溯）
+
+设计取舍：cherry-pick 是误操作风险高的写操作（误推到错分支极易污染 MP 分支线），人工介入是可接受的代价。
+
+### 4. 0.3.0 架构变化：NoteDb meta ref + Thread Closure
+
+**问题**：SSH `gerrit query --comments` 返回的 inline 评论只含 `{file, line, reviewer, message}`，**不含**：
+- `uuid`（标识单条评论）
+- `unresolved`（解决状态）
+- `parentUuid` / `in_reply_to`（thread 父子关系）
+
+后果：`reply_inline_comment` 仅靠 file+line anchor 发送的 unresolved=false 子评论是 **orphan**，**不能影响父评论 thread 的 unresolved 状态**。Web UI 显示 "X resolved" 计数因新评论自身被算入而 +1，但 gerrit-ai 父评论的 thread **仍 unresolved**——这是假闭环。
+
+**新发现的可行通道**：Gerrit NoteDb 把所有评论存在 `refs/changes/<XX>/<change>/meta` 这个 git ref 里。**SSH git protocol 可以正常 fetch 这个 ref**（不经 nginx），文件内容是含完整 `{ key.uuid, parentUuid, unresolved, lineNbr, message, ... }` 的 JSON。
+
+**新增工具 `get_unresolved_threads`**：
+1. SSH `gerrit query --current-patch-set` 拿 project + currentPatchSet.revision
+2. `git fetch ssh://...:29418/<project> refs/changes/<XX>/<change>/meta` 到临时 dir
+3. 找最新 commit 上 `<patch_set_commit_sha>` 文件的 JSON 内容
+4. `buildThreads()` 按 parentUuid 重建 thread 视图
+5. 过滤未解决 thread（thread 状态 = chain 最末一条评论的 unresolved）
+
+**新增工具 `submit_review_reply`**（Web UI "REPLY" 按钮的批量等价）：
+- 单次 SSH `gerrit review --json` 同时提交多条 inline 回复 + cover message + label
+- 每条 inline 回复带 `in_reply_to=<root_uuid>` 与 `unresolved=false`，建立**真正的 thread 关系**
+- 触发 1 次 OWNER_REVIEWERS 通知（不是 5 条评论 5 次通知）
+
+**实证（change 114401，2026-06）**：
+- 5 条 gerrit-ai 父评论（unresolved=true）通过 NoteDb fetch 拿到 5 个 uuid
+- 单次 submit_review_reply 提交 5 条 in_reply_to 子评论 + unresolved=false
+- 验证：Web UI 显示 "0 unresolved / 21 resolved"，thread 闭环成功
+
+**新增 Properties（22-25 范围）**：
+- Property 22: NoteDb shard 计算 `last-2-padded`（"5" → "05"，"114401" → "01"）幂等
+- Property 23: buildThreads 重建后，每条评论恰好属于一个 thread；root 集合大小 ≤ 总评论数
+- Property 24: thread.is_unresolved === thread.chain[最末].unresolved（按 writtenOn 升序）
+- Property 25: submit_review_reply 接受同一 file 下的多条 inline 时，输出 ReviewInput.comments[file] 数组顺序与入参一致
+
+### 5. 处理 gerrit-ai 评论的工作流升级（三态评估）
+
+**问题**：仅靠工具层把 unresolved 计数归零是**假闭环**——
+- 真问题没修，下个 patch set gerrit-ai 重新打分还会指出同样问题
+- Developer 看 "0 unresolved" 误以为已修复，实际 push 进生产后真的有 bug
+
+**新增 Steering `code-review-handling.md`**：
+- 6 阶段流程：拉取 unresolved threads → 单条评估 → 用户审阅决策（🔴 CHECKPOINT）→ 实际修复（仅 ACCEPT）→ push 新 patch set → 单次 submit_review_reply
+- **三态评估**（封闭枚举）：
+  - `ACCEPT` — 评论合理且应实做，回复 unresolved=false，**必须改代码 + push 新 patch set 才能回复**
+  - `REJECT` — 评论不适用，回复 unresolved=false 含 evidence
+  - `ACK` — 评论合理但本 PR 不修，回复 **unresolved=true** 保留 + 建 Zmind follow-up
+- **严重程度梯度**：CRITICAL 必须人工逐条审；HIGH 二次确认；MEDIUM 可自主评估；LOW 可批量
+- **12 条 Don't 黑名单**（团队踩坑反向编码）
+
+**Steering 引用更新**：
+- `pr-cr-workflow.md` 第 ⑧ 步从机械的"reply + resolved"改为指向 `code-review-handling`
+- `gerrit-workflow.md` 第 ③ 步同上
+
+### 6. 工具数量变化与受影响文档
+
+| 资产 | 0.1.0 | 0.3.0 |
+|------|-------|-------|
+| Gerrit MCP 工具数 | 12（4 读 + 8 写） | 14（5 读 + 9 写） |
+| 新增读工具 | — | `get_unresolved_threads` |
+| 新增写工具 | — | `submit_review_reply` |
+| 通道 | REST | SSH + NoteDb meta ref（git fetch） |
+| Steering 数 | 7 | 8（新增 `code-review-handling`） |
+
+**受影响文档**（已同步）：POWER.md / README.md / agent/whaletv-dev.json / mcp.json / `.kiro/skills/gerrit-integration.md` / `steering/onboarding.md` / `steering/cherry-pick-workflow.md` / `steering/pr-cr-workflow.md` / `steering/gerrit-workflow.md` / 新增 `steering/code-review-handling.md`。
+
+### 7. 后续工作
+
+- **若 IT 修复 nginx 双层认证** → 添加 `GERRIT_TRANSPORT=rest` 环境变量切换通道，`http-client.ts` 路径直接复活；删除 SSH 限制相关 Steering 章节
+- **PBT 补全**（Property 22-25）— 当前 0.3.0 的 SSH / NoteDb 路径暂未写 PBT；优先级低于 dogfood 反馈
+- **mcp.json 配置示例补充 SSH env vars**（GERRIT_SSH_USER / GERRIT_SSH_HOST / GERRIT_SSH_PORT 三个可选 env，默认 fallback 到 GERRIT_USERNAME / GERRIT_URL，已在 POWER.md 环境变量表中说明）
+
+---
+
+附录结束 — 0.3.0 状态：14 工具 + SSH 通道 + NoteDb meta ref + 三态评估，已通过 change 114401 端到端实证。

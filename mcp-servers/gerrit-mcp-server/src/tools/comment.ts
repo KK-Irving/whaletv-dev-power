@@ -1,94 +1,79 @@
 /**
- * Gerrit 评论写操作工具集。
+ * Gerrit 评论写操作工具集 (SSH 通道)。
  *
- * 提供 3 个工具函数（在 src/index.ts 中由任务 5.9 统一注册为 MCP 工具）：
- *   - addReviewComment:    POST /changes/{id}/revisions/{rev}/review               添加 review 级评论
- *   - replyInlineComment:  POST /changes/{id}/revisions/{rev}/review (含 comments)  回复 inline 评论
- *   - markCommentResolved: POST /changes/{id}/revisions/{rev}/review (unresolved=false) 将评论标记为 resolved
+ * 背景：本环境 nginx 双层认证使 REST `/a/...` 不可用，全部走 SSH `gerrit review --json`。
+ * 实证（2026-06，change 114401）：
+ *   - cover message + tag + notify=NONE 通过 stdin JSON 注入工作正常
+ *   - inline comments[file][{line, message, unresolved}] 通过 stdin JSON 注入工作正常
+ *   - 单次 review 可同时提交多条 inline + cover message + label 设置（即 Web UI "REPLY" 语义）
+ *   - unresolved=false 在 Web UI 上正确显示为 "resolved"
+ *   - UTF-8 / 中文 / emoji 通过 Buffer 写 stdin 完整保留
  *
- * 设计要点（见 design.md 第 4 节 "Comment 工具：Robot vs Review Comments 选型"）：
- *   - 全部使用 **Review Comments API**（非 Robot Comments），保证 unresolved 计数与人类评审语义一致
- *   - 添加评论后无法直接获取新 comment_id（Gerrit POST review 不直接返回），通过事后查询
- *     `/messages` 或 `/comments` 端点定位新创建的条目（按时间倒序找最近一条）
- *   - 评论文本入参做空白校验（`trim().length === 0` 拒绝）与长度上限校验（≤ 16384 字符），
- *     满足 Property 12 契约
- *   - HTTP 错误（401/403/404 等）由底层 `gerritGet/Post` 透传 StructuredError；
- *     工具层在 message 中保留 `change_id` / `parent_comment_id` / `comment_id`，满足 Property 5
- *   - 路径参数（change_id、comment_id）通过 `encodeURIComponent` 编码
+ * 关键限制（与 REST 实现的差异）：
+ *   - SSH `gerrit query --comments` 不返回 comment uuid，因此 reply_inline_comment
+ *     **不能用 in_reply_to=<uuid> 精确串联到历史评论**
+ *   - 替代方案（与你确认的 workaround C 一致）：reply_inline_comment 接受
+ *     `(change_id, file, line, message, unresolved)`，作为顶层 inline 评论发到
+ *     同一 file+line。Gerrit Web UI 在视觉上把它显示在原评论附近，且 unresolved
+ *     状态在 Web UI 上正确反映为 "X resolved" 计数。
+ *   - patchset-level 评论（file === "/PATCHSET_LEVEL"）不接受 line 字段（即使是 0）
  *
- * 不在 `src/index.ts` 注册 MCP 工具（统一由任务 5.9 处理）。
+ * 四个工具：
+ *   - submitReviewReply:   ★ Web UI "REPLY" 按钮的批量等价：单次 review 提交多条 inline + cover + label
+ *                            处理 5 条 gerrit-ai 评论的标准方式，触发 1 次 OWNER 通知（不是 5 次）
+ *   - addReviewComment:    cover-level 评论（gerrit review --json + {message, tag, notify}）
+ *   - replyInlineComment:  单条 inline 回复（适合只回复 1 条评论的小流程）
+ *   - markCommentResolved: 单条 mark resolved（同上）
+ *
+ * 错误处理：
+ *   - 评论文本空白校验（Property 12）
+ *   - SSH 子进程错误统一映射到 StructuredError（由 ssh-client.ts 处理）
+ *   - 错误消息保留 change_id / file / line（Property 5）
  */
 
-import { gerritGet, gerritPost } from "../http-client.js";
+import { sshGerritPlain, sshGerritJson } from "../ssh-client.js";
 import { StructuredError } from "../errors.js";
 
 // =============================================================================
 // 常量
 // =============================================================================
 
-/** 评论文本最大字符数；超出即拒绝（保护客户端避免发出超大 body）。 */
+/** 评论文本最大字符数；超出即拒绝。 */
 const COMMENT_MESSAGE_MAX_CHARS = 16384;
 
-// =============================================================================
-// 内部类型：Gerrit 响应模型（仅取本工具用到的字段）
-// =============================================================================
+/** 单次批量回复中最多 inline 评论条数（防止超大 payload）。 */
+const MAX_INLINE_REPLIES_PER_BATCH = 50;
 
-/**
- * `GET /changes/{id}/messages` 返回的 review 级 message。
- *
- * Gerrit 在添加 review 评论后会创建一条 ChangeMessage，message 字段通常包含
- * `Patch Set N:\n\n` 前缀加上原始评论文本，因此匹配时使用 `===` 精确等价或 `includes` 子串包含。
- */
-interface GerritChangeMessageInfo {
-  id: string;
-  /** ISO 8601 时间字符串。 */
-  date: string;
-  message: string;
-  _revision_number?: number;
-  /** Gerrit `tag` 字段标记机器生成评论；本工具不过滤。 */
-  tag?: string;
-  author?: { _account_id?: number; name?: string; email?: string };
-}
+/** 合法 Gerrit 标签集合（用于 submit_review_reply 入参校验）。 */
+const KNOWN_LABELS = ["Code-Review", "Verified"];
 
-/**
- * `GET /changes/{id}/comments` 返回结构：以文件路径为 key 的 inline 评论字典。
- *
- * 文档：https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html#list-change-comments
- */
-type GerritCommentMap = Record<string, GerritCommentInfo[]>;
+/** Notify 取值集合。 */
+const NOTIFY_VALUES = ["NONE", "OWNER", "OWNER_REVIEWERS", "ALL"] as const;
+type NotifyLevel = (typeof NOTIFY_VALUES)[number];
 
-interface GerritCommentInfo {
-  id: string;
-  /** ISO 8601；Gerrit 部分版本仅提供 updated。 */
-  updated?: string;
-  created?: string;
+/** Gerrit review --json 接受的 ReviewInput 通用字段 */
+interface ReviewInputBase {
   message?: string;
-  unresolved?: boolean;
-  line?: number;
-  patch_set?: number;
-  /** 父评论 ID（用于 inline 评论的回复链）。 */
-  in_reply_to?: string;
-  author?: { _account_id?: number; name?: string; email?: string };
+  tag?: string;
+  notify?: NotifyLevel;
+  comments?: Record<string, ReviewInputInlineComment[]>;
+  labels?: Record<string, number>;
 }
 
-/** 在 comments map 中定位到的某条评论的归属信息（path/line/patch_set 用于后续 POST review 时填充）。 */
-interface LocatedComment {
-  path: string;
+interface ReviewInputInlineComment {
+  /** patchset-level 评论不能传 line（Gerrit 拒绝）；具体文件评论必须传。 */
   line?: number;
-  patch_set?: number;
+  message: string;
+  unresolved?: boolean;
+  /** 可选；SSH query 不返回 uuid，因此通常不传 */
+  in_reply_to?: string;
 }
 
 // =============================================================================
 // 内部辅助
 // =============================================================================
 
-/**
- * 校验评论文本：必须为字符串、trim 后长度 > 0、长度 ≤ COMMENT_MESSAGE_MAX_CHARS。
- *
- * 失败时抛 `StructuredError("internal_error", ...)`，与 reviewer.ts 中输入校验风格一致。
- *
- * Property 12 契约：trim().length === 0 必拒绝；非空白文本必通过校验。
- */
+/** 校验评论文本（Property 12）。 */
 function validateCommentMessage(message: string): void {
   if (typeof message !== "string" || message.trim().length === 0) {
     throw new StructuredError(
@@ -105,68 +90,78 @@ function validateCommentMessage(message: string): void {
 }
 
 /**
- * 把底层 StructuredError 重新抛出，message 前缀加入工具层上下文（含原始 change_id 等标识符）。
+ * 提交 ReviewInput JSON 到 gerrit review。
  *
- * 保留原 error_type / http_status / details，仅修改 message。这样：
- *   - Property 5 满足：上下文必出现在 message 中
- *   - 上层 dispatcher 仍能通过 error_type 对 401/403/404 做分类提示
- *   - 非 StructuredError 的兜底由 src/index.ts 的 withErrorHandling 统一处理
+ * 第二个参数是 `<change-or-commit>,<patchset>` 字符串（gerrit review 命令位置参数）。
+ * 当 patchSet 为 undefined 时使用 `current` —— SSH 不接受 "current"，需显式给数字；
+ * 因此这种情况下需要先用 query 拿到 currentPatchSet.number。
  */
-function rewrapWithContext(err: unknown, contextPrefix: string): never {
-  if (err instanceof StructuredError) {
+async function submitReview(
+  changeId: string,
+  patchSet: number,
+  body: ReviewInputBase,
+): Promise<void> {
+  const json = JSON.stringify(body);
+  const buf = Buffer.from(json, "utf8");
+  await sshGerritPlain(
+    [
+      "gerrit",
+      "review",
+      "--json",
+      `${escapeIdentifier(changeId)},${patchSet}`,
+    ],
+    buf,
+  );
+}
+
+/**
+ * 转义 Gerrit identifier（Change-Id / Change Number）。
+ *
+ * 不允许空格 / 引号 / 反引号 / 反斜杠，因为 spawn 数组传参不经 shell，但
+ * gerrit 命令本身的 token 解析对这些字符敏感。
+ */
+function escapeIdentifier(token: string): string {
+  const trimmed = token.trim();
+  if (trimmed.length === 0) {
+    throw new StructuredError("internal_error", "change_id 不可为空");
+  }
+  if (/[\s`"'\\]/.test(trimmed)) {
     throw new StructuredError(
-      err.error_type,
-      `${contextPrefix}: ${err.message}`,
-      err.http_status,
-      err.details,
+      "internal_error",
+      `change_id 包含非法字符: ${trimmed}`,
     );
   }
-  throw err;
+  return trimmed;
 }
 
 /**
- * 从 commentsMap 中查找指定 ID 的评论，返回其归属（path/line/patch_set）。
+ * 取 change 的 currentPatchSet.number；若调用方未提供 patch_set 时使用。
  *
- * @returns 找到时返回 LocatedComment + 原始评论；找不到返回 null（由调用方决定如何报错）
+ * 不引入 query.ts 的 queryChange 来避免循环依赖；直接走 ssh-client.ts。
  */
-function locateCommentById(
-  map: GerritCommentMap | null | undefined,
-  commentId: string,
-): { located: LocatedComment; comment: GerritCommentInfo } | null {
-  if (!map || typeof map !== "object") return null;
-  for (const [path, list] of Object.entries(map)) {
-    if (!Array.isArray(list)) continue;
-    for (const c of list) {
-      if (c && c.id === commentId) {
-        return {
-          located: { path, line: c.line, patch_set: c.patch_set },
-          comment: c,
-        };
-      }
-    }
+async function resolveCurrentPatchSet(changeId: string): Promise<number> {
+  const { rows } = await sshGerritJson<{ currentPatchSet?: { number?: number } }>([
+    "gerrit",
+    "query",
+    "--format=JSON",
+    "--current-patch-set",
+    `change:${escapeIdentifier(changeId)}`,
+  ]);
+  if (rows.length === 0) {
+    throw new StructuredError(
+      "not_found",
+      `Change 不存在或不可见: change_id=${changeId}`,
+      404,
+    );
   }
-  return null;
-}
-
-/**
- * 把评论 map 拍平为评论数组，用于按 in_reply_to 过滤新创建的回复。
- */
-function flattenComments(map: GerritCommentMap | null | undefined): GerritCommentInfo[] {
-  if (!map || typeof map !== "object") return [];
-  const flat: GerritCommentInfo[] = [];
-  for (const list of Object.values(map)) {
-    if (Array.isArray(list)) flat.push(...list);
+  const ps = rows[0].currentPatchSet?.number;
+  if (typeof ps !== "number" || !Number.isFinite(ps) || ps <= 0) {
+    throw new StructuredError(
+      "internal_error",
+      `Change ${changeId} 缺少 currentPatchSet.number`,
+    );
   }
-  return flat;
-}
-
-/**
- * 解析 ISO 8601 时间字符串为可比较的数值。无法解析时回退为 0（最早），保证排序稳定。
- */
-function parseTime(s: string | undefined): number {
-  if (typeof s !== "string" || s.length === 0) return 0;
-  const t = Date.parse(s);
-  return Number.isFinite(t) ? t : 0;
+  return ps;
 }
 
 // =============================================================================
@@ -174,260 +169,381 @@ function parseTime(s: string | undefined): number {
 // =============================================================================
 
 /**
- * 向 Change 的指定 patch set（默认 current）添加 review 级评论。
+ * 向 Change 的指定 patch set（默认 current）添加 review-cover 评论。
  *
- * 实现：
- *   1. POST /changes/{id}/revisions/{rev}/review { message }
- *   2. GET  /changes/{id}/messages 拉所有 review 级 message
- *   3. 在结果中找出与传入 message 相等或包含传入 message 的最近一条（按 date 倒序）
- *   4. 返回 `{ comment_id, created }`
+ * 因 SSH 不返回新 message id，这里**不再返回 comment_id**，仅返回
+ * `{ ok: true, change_id, patch_set }` 让上层确认提交成功即可。
  *
- * Gerrit 的 ChangeMessage.message 字段通常自带 `Patch Set N:\n\n` 前缀，故先尝试精确匹配，
- * 失败再退化为子串包含，避免误匹配早期相同文本的历史评论。
- *
- * @throws StructuredError("internal_error") message 校验失败 / 添加成功后无法定位 comment_id
- * @throws StructuredError(...)              HTTP 错误透传（401/403/404 等）
+ * @throws StructuredError("internal_error") message 校验失败
+ * @throws StructuredError(...)              SSH 错误透传
  */
 export async function addReviewComment(args: {
   change_id: string;
   message: string;
   patch_set?: number;
-}): Promise<{ comment_id: string; created: string }> {
+}): Promise<{ ok: true; change_id: string; patch_set: number }> {
   validateCommentMessage(args.message);
 
-  const revision =
-    typeof args.patch_set === "number" && Number.isFinite(args.patch_set)
-      ? String(args.patch_set)
-      : "current";
-  const encodedId = encodeURIComponent(args.change_id);
-  const reviewPath = `/changes/${encodedId}/revisions/${revision}/review`;
-  const messagesPath = `/changes/${encodedId}/messages`;
-  const contextPrefix = `向 Change ${args.change_id} 添加 review 评论失败`;
+  const patchSet =
+    typeof args.patch_set === "number" && args.patch_set > 0
+      ? args.patch_set
+      : await resolveCurrentPatchSet(args.change_id);
 
-  // ① POST 提交评论
-  try {
-    await gerritPost(reviewPath, { message: args.message });
-  } catch (err) {
-    rewrapWithContext(err, contextPrefix);
-  }
+  await submitReview(args.change_id, patchSet, {
+    message: args.message,
+    tag: "autogenerated:gerrit-mcp-server:add_review_comment",
+    notify: "OWNER",
+  });
 
-  // ② 重新拉 messages 列表，按 date 倒序找最近一条匹配
-  let messages: GerritChangeMessageInfo[];
-  try {
-    messages = await gerritGet<GerritChangeMessageInfo[]>(messagesPath);
-  } catch (err) {
-    rewrapWithContext(err, `${contextPrefix}（提交后回查 messages 失败）`);
-  }
-
-  const safeMessages = Array.isArray(messages!) ? messages! : [];
-  // date 倒序：最新创建的 message 最先被遍历
-  const sorted = safeMessages
-    .slice()
-    .sort((a, b) => parseTime(b.date) - parseTime(a.date));
-
-  // 优先精确等价；找不到再用子串包含（兼容 Gerrit `Patch Set N:\n\n<msg>` 包装）
-  const exact = sorted.find((m) => m.message === args.message);
-  const candidate =
-    exact ?? sorted.find((m) => typeof m.message === "string" && m.message.includes(args.message));
-
-  if (!candidate) {
-    throw new StructuredError(
-      "internal_error",
-      `添加评论后无法定位新创建的 comment_id（change_id=${args.change_id}）`,
-      undefined,
-      { message_count: safeMessages.length },
-    );
-  }
-
-  return { comment_id: candidate.id, created: candidate.date };
+  return { ok: true, change_id: args.change_id, patch_set: patchSet };
 }
 
 // =============================================================================
-// 2. replyInlineComment
+// 2. replyInlineComment（file+line anchor，与你确认的 workaround C）
 // =============================================================================
 
 /**
- * 在指定 inline 评论上发布回复（可同时设置 unresolved 状态）。
+ * 在指定 file+line 上发布 inline 评论（可同时 unresolved=false 来 mark resolved）。
  *
- * 实现：
- *   1. GET  /changes/{id}/comments 找出 parent_comment_id 所在的 path/line/patch_set
- *      - 找不到 → 抛 StructuredError(not_found, 404)
- *   2. POST /changes/{id}/revisions/{parent.patch_set ?? "current"}/review
- *           { comments: { [path]: [{ line, in_reply_to, message, unresolved }] } }
- *   3. GET  /changes/{id}/comments 再次查询，按 in_reply_to===parent_comment_id 过滤，
- *      按 updated 倒序取最新一条
+ * 与 REST 实现的差异：
+ *   - 不再接受 parent_comment_id（SSH 拿不到 uuid）
+ *   - 接受 file+line 作为 anchor；Gerrit Web UI 会把回复显示在该位置原评论附近
+ *   - in_reply_to 字段可选；如果调用方从浏览器 Inspect 取到了 uuid 可以传，否则留空
  *
- * @throws StructuredError("internal_error") message 校验失败 / 回复成功后无法定位 comment_id
- * @throws StructuredError("not_found", 404) parent_comment_id 不存在
- * @throws StructuredError(...)              HTTP 错误透传
+ * @throws StructuredError("internal_error") message 校验失败 / file 为空 / line 非法
+ * @throws StructuredError(...)              SSH 错误透传
  */
 export async function replyInlineComment(args: {
   change_id: string;
-  parent_comment_id: string;
+  file: string;
+  line: number;
   message: string;
-  unresolved: boolean;
-}): Promise<{ comment_id: string; created: string }> {
+  unresolved?: boolean;
+  patch_set?: number;
+  in_reply_to?: string;
+}): Promise<{ ok: true; change_id: string; file: string; line: number; patch_set: number }> {
   validateCommentMessage(args.message);
 
-  if (typeof args.parent_comment_id !== "string" || args.parent_comment_id.length === 0) {
-    throw new StructuredError("internal_error", "parent_comment_id 不可为空");
+  if (typeof args.file !== "string" || args.file.trim().length === 0) {
+    throw new StructuredError("internal_error", "file 不可为空");
   }
-
-  const encodedId = encodeURIComponent(args.change_id);
-  const commentsPath = `/changes/${encodedId}/comments`;
-  const contextPrefix = `回复评论 ${args.parent_comment_id}（Change ${args.change_id}）失败`;
-
-  // ① 定位父评论
-  let firstMap: GerritCommentMap;
-  try {
-    firstMap = await gerritGet<GerritCommentMap>(commentsPath);
-  } catch (err) {
-    rewrapWithContext(err, `${contextPrefix}（查询 comments 失败）`);
-  }
-
-  const located = locateCommentById(firstMap!, args.parent_comment_id);
-  if (!located) {
-    throw new StructuredError(
-      "not_found",
-      `评论 ID 不存在: ${args.parent_comment_id}（Change ${args.change_id}）`,
-      404,
-    );
-  }
-
-  // ② 提交回复
-  const revision =
-    typeof located.located.patch_set === "number" && Number.isFinite(located.located.patch_set)
-      ? String(located.located.patch_set)
-      : "current";
-  const reviewPath = `/changes/${encodedId}/revisions/${revision}/review`;
-  const replyEntry: {
-    in_reply_to: string;
-    message: string;
-    unresolved: boolean;
-    line?: number;
-  } = {
-    in_reply_to: args.parent_comment_id,
-    message: args.message,
-    unresolved: args.unresolved,
-  };
-  // 仅当父评论是 inline（line 存在）时补 line；review 级或文件级评论保持 undefined
-  if (typeof located.located.line === "number") {
-    replyEntry.line = located.located.line;
-  }
-  const reviewBody = {
-    comments: {
-      [located.located.path]: [replyEntry],
-    },
-  };
-
-  try {
-    await gerritPost(reviewPath, reviewBody);
-  } catch (err) {
-    rewrapWithContext(err, contextPrefix);
-  }
-
-  // ③ 回查 comments 找新建的回复（按 in_reply_to 过滤、按 updated 倒序）
-  let secondMap: GerritCommentMap;
-  try {
-    secondMap = await gerritGet<GerritCommentMap>(commentsPath);
-  } catch (err) {
-    rewrapWithContext(err, `${contextPrefix}（提交后回查 comments 失败）`);
-  }
-
-  const replies = flattenComments(secondMap!).filter(
-    (c) => c.in_reply_to === args.parent_comment_id,
-  );
-  // updated 倒序；缺失 updated 退化为 created
-  replies.sort((a, b) => parseTime(b.updated ?? b.created) - parseTime(a.updated ?? a.created));
-
-  const newest = replies[0];
-  if (!newest) {
+  if (!Number.isInteger(args.line) || args.line < 0) {
     throw new StructuredError(
       "internal_error",
-      `回复评论 ${args.parent_comment_id} 后无法定位新创建的 comment_id（Change ${args.change_id}）`,
+      `line 必须为非负整数: ${args.line}（patchset-level 评论用 line=0 + file=/PATCHSET_LEVEL）`,
     );
   }
 
+  const patchSet =
+    typeof args.patch_set === "number" && args.patch_set > 0
+      ? args.patch_set
+      : await resolveCurrentPatchSet(args.change_id);
+
+  const inline: ReviewInputInlineComment = {
+    line: args.line,
+    message: args.message,
+    unresolved: args.unresolved ?? true,
+  };
+  if (args.in_reply_to) inline.in_reply_to = args.in_reply_to;
+
+  await submitReview(args.change_id, patchSet, {
+    tag: "autogenerated:gerrit-mcp-server:reply_inline_comment",
+    notify: "OWNER",
+    comments: {
+      [args.file]: [inline],
+    },
+  });
+
   return {
-    comment_id: newest.id,
-    created: newest.updated ?? newest.created ?? "",
+    ok: true,
+    change_id: args.change_id,
+    file: args.file,
+    line: args.line,
+    patch_set: patchSet,
   };
 }
 
 // =============================================================================
-// 3. markCommentResolved
+// 3. markCommentResolved（file+line anchor）
 // =============================================================================
 
 /**
- * 将一条已存在的 inline 评论标记为 resolved。
+ * 把指定 file+line 上的 inline 评论标记为 resolved。
  *
- * 通过提交一条 unresolved=false 的 review 回复实现（见 design.md 第 4 节"revision API 路径选择"
- * 与 Req 12 的"reply_inline_comment（含 unresolved=false 即同时回复并 resolve）或 mark_comment_resolved"
- * 描述）。这样能与 reply_inline_comment 共享同一 Gerrit 路径，避免对 Gerrit 内部 PUT 评论端点的依赖。
+ * 实现：发送 unresolved=false 的 inline 评论到该 file+line，Gerrit 会把
+ * 该位置的所有未解决评论标记为 resolved（实证：change 114401 上验证有效）。
  *
- * @throws StructuredError("internal_error") comment_id 为空
- * @throws StructuredError("not_found", 404) comment_id 在该 Change 上不存在
- * @throws StructuredError(...)              HTTP 错误透传
+ * @param args.message 可选；不传则用默认文本 "已标记为 resolved"
+ *
+ * @throws StructuredError("internal_error") file 为空 / line 非法
+ * @throws StructuredError(...)              SSH 错误透传
  */
 export async function markCommentResolved(args: {
   change_id: string;
-  comment_id: string;
-}): Promise<{ ok: true }> {
-  if (typeof args.comment_id !== "string" || args.comment_id.length === 0) {
-    throw new StructuredError("internal_error", "comment_id 不可为空");
+  file: string;
+  line: number;
+  message?: string;
+  patch_set?: number;
+}): Promise<{ ok: true; change_id: string; file: string; line: number; patch_set: number }> {
+  if (typeof args.file !== "string" || args.file.trim().length === 0) {
+    throw new StructuredError("internal_error", "file 不可为空");
   }
-
-  const encodedId = encodeURIComponent(args.change_id);
-  const commentsPath = `/changes/${encodedId}/comments`;
-  const contextPrefix = `标记评论 ${args.comment_id}（Change ${args.change_id}）为 resolved 失败`;
-
-  // ① 定位目标评论
-  let map: GerritCommentMap;
-  try {
-    map = await gerritGet<GerritCommentMap>(commentsPath);
-  } catch (err) {
-    rewrapWithContext(err, `${contextPrefix}（查询 comments 失败）`);
-  }
-
-  const located = locateCommentById(map!, args.comment_id);
-  if (!located) {
+  if (!Number.isInteger(args.line) || args.line < 0) {
     throw new StructuredError(
-      "not_found",
-      `评论 ID 不存在: ${args.comment_id}（Change ${args.change_id}）`,
-      404,
+      "internal_error",
+      `line 必须为非负整数: ${args.line}`,
     );
   }
 
-  // ② 提交 unresolved=false 的回复
-  const revision =
-    typeof located.located.patch_set === "number" && Number.isFinite(located.located.patch_set)
-      ? String(located.located.patch_set)
-      : "current";
-  const reviewPath = `/changes/${encodedId}/revisions/${revision}/review`;
-  const replyEntry: {
-    in_reply_to: string;
-    message: string;
-    unresolved: boolean;
-    line?: number;
-  } = {
-    in_reply_to: args.comment_id,
-    message: "已标记为 resolved",
+  const finalMessage =
+    typeof args.message === "string" && args.message.trim().length > 0
+      ? args.message
+      : "已标记为 resolved";
+
+  return replyInlineComment({
+    change_id: args.change_id,
+    file: args.file,
+    line: args.line,
+    message: finalMessage,
     unresolved: false,
-  };
-  if (typeof located.located.line === "number") {
-    replyEntry.line = located.located.line;
-  }
-  const reviewBody = {
-    comments: {
-      [located.located.path]: [replyEntry],
-    },
-  };
+    patch_set: args.patch_set,
+  });
+}
 
-  try {
-    await gerritPost(reviewPath, reviewBody);
-  } catch (err) {
-    rewrapWithContext(err, contextPrefix);
+
+// =============================================================================
+// 4. submitReviewReply（★ Web UI "REPLY" 按钮的批量等价）
+// =============================================================================
+
+/**
+ * 单条 inline 回复入参（submitReviewReply 内的元素）。
+ */
+export interface InlineReplyEntry {
+  /** 文件路径（与 get_change_comments 返回的 path 字段一致），或 "/PATCHSET_LEVEL" */
+  file: string;
+  /**
+   * 行号；patchset-level 评论不传 line（Gerrit 拒绝带 line 的 patchset-level 评论）。
+   * 具体文件评论必须传非负整数。
+   */
+  line?: number;
+  /** 回复文本，1..16384 字符。 */
+  message: string;
+  /** 是否标记 unresolved；undefined 等价 false（即默认标记为 resolved）。 */
+  unresolved?: boolean;
+  /** 可选 comment uuid（仅当 Developer 从 Web UI 拿到 uuid 时传）。 */
+  in_reply_to?: string;
+}
+
+/**
+ * 批量提交 review 回复，对应 Web UI "REPLY" 按钮的语义。
+ *
+ * 一次 SSH `gerrit review --json` 调用同时提交：
+ *   - 多条 inline 回复（含 unresolved 标记）
+ *   - 可选的 cover message（review log 上的整体留言）
+ *   - 可选的 label 设置（如 Code-Review +1）
+ *   - 单次 OWNER 通知（默认 OWNER；可显式指定 NONE/OWNER_REVIEWERS/ALL）
+ *
+ * 用法（处理 5 条 gerrit-ai 评论的标准方式）：
+ * ```
+ * submit_review_reply({
+ *   change_id: "114401",
+ *   cover_message: "已处理所有 gerrit-ai 评论，详见 inline。",
+ *   inline_replies: [
+ *     { file: "/PATCHSET_LEVEL", message: "已采纳建议 ...", unresolved: false },
+ *     { file: "src/foo.c", line: 42, message: "已修复 ...", unresolved: false },
+ *     ...
+ *   ],
+ *   labels: { "Code-Review": -1 },  // 可选；如果还想等 AI 再 review 一轮
+ *   notify: "OWNER",                 // 默认即 OWNER
+ * })
+ * ```
+ *
+ * 实证（change 114401，4 条 patchset-level + 1 条 file:25）：单次 SSH 调用全部
+ * 成功提交，Web UI 显示为一次合并 review，unresolved 计数从 5 降到 0。
+ *
+ * @throws StructuredError("internal_error") inline_replies 为空 / 元素校验失败 / 标签值越界
+ * @throws StructuredError("not_found")      change_id 不存在（resolveCurrentPatchSet 触发）
+ * @throws StructuredError(...)              SSH 错误透传
+ */
+export async function submitReviewReply(args: {
+  change_id: string;
+  inline_replies: InlineReplyEntry[];
+  cover_message?: string;
+  labels?: Record<string, number>;
+  notify?: NotifyLevel;
+  patch_set?: number;
+}): Promise<{
+  ok: true;
+  change_id: string;
+  patch_set: number;
+  submitted_inline_count: number;
+  cover_message_included: boolean;
+  labels_applied: Record<string, number> | null;
+  notify: NotifyLevel;
+}> {
+  // ① 必备：inline_replies 非空数组
+  if (!Array.isArray(args.inline_replies) || args.inline_replies.length === 0) {
+    throw new StructuredError(
+      "internal_error",
+      "inline_replies 必须是非空数组（至少包含 1 条 inline 回复）。如仅需添加 cover message 而无 inline 回复，请改用 add_review_comment。",
+    );
+  }
+  if (args.inline_replies.length > MAX_INLINE_REPLIES_PER_BATCH) {
+    throw new StructuredError(
+      "internal_error",
+      `inline_replies 超出单批 ${MAX_INLINE_REPLIES_PER_BATCH} 条上限（实际 ${args.inline_replies.length}）。请分批提交。`,
+    );
   }
 
-  return { ok: true };
+  // ② cover_message（可选）非空白校验
+  let coverMessage: string | undefined;
+  if (typeof args.cover_message === "string") {
+    const trimmed = args.cover_message.trim();
+    if (trimmed.length === 0) {
+      throw new StructuredError(
+        "internal_error",
+        "cover_message 提供时不可为空白；如不需要 cover message 请省略该字段",
+      );
+    }
+    if (args.cover_message.length > COMMENT_MESSAGE_MAX_CHARS) {
+      throw new StructuredError(
+        "internal_error",
+        `cover_message 超出 ${COMMENT_MESSAGE_MAX_CHARS} 字符上限`,
+      );
+    }
+    coverMessage = args.cover_message;
+  }
+
+  // ③ notify 校验
+  const notify: NotifyLevel = args.notify ?? "OWNER";
+  if (!NOTIFY_VALUES.includes(notify)) {
+    throw new StructuredError(
+      "internal_error",
+      `notify 取值非法: ${notify}（合法值 ${NOTIFY_VALUES.join(" / ")}）`,
+    );
+  }
+
+  // ④ labels 校验
+  let labelsValidated: Record<string, number> | null = null;
+  if (args.labels && typeof args.labels === "object") {
+    labelsValidated = {};
+    for (const [name, value] of Object.entries(args.labels)) {
+      if (!KNOWN_LABELS.includes(name)) {
+        // 未知标签不阻塞，但记录便于排查（Gerrit 会自己报 422）
+        // 仍校验 value 是合法整数
+      }
+      if (!Number.isInteger(value) || value < -2 || value > 2) {
+        throw new StructuredError(
+          "internal_error",
+          `label '${name}' 值越界（必须为 -2..+2 整数）: ${value}`,
+        );
+      }
+      if (typeof name !== "string" || name.trim().length === 0) {
+        throw new StructuredError("internal_error", "label 名不可为空");
+      }
+      if (/[\s=`"'\\]/.test(name)) {
+        throw new StructuredError(
+          "internal_error",
+          `label 名包含非法字符: ${name}`,
+        );
+      }
+      labelsValidated[name] = value;
+    }
+    if (Object.keys(labelsValidated).length === 0) labelsValidated = null;
+  }
+
+  // ⑤ inline_replies 元素校验 + 按 file 分组
+  const groupedByFile: Record<string, ReviewInputInlineComment[]> = {};
+  for (let i = 0; i < args.inline_replies.length; i++) {
+    const entry = args.inline_replies[i];
+    if (typeof entry !== "object" || entry === null) {
+      throw new StructuredError(
+        "internal_error",
+        `inline_replies[${i}] 不是对象`,
+      );
+    }
+    if (typeof entry.file !== "string" || entry.file.trim().length === 0) {
+      throw new StructuredError(
+        "internal_error",
+        `inline_replies[${i}].file 不可为空`,
+      );
+    }
+    if (typeof entry.message !== "string" || entry.message.trim().length === 0) {
+      throw new StructuredError(
+        "internal_error",
+        `inline_replies[${i}].message 不可为空（trim 后长度为 0）`,
+      );
+    }
+    if (entry.message.length > COMMENT_MESSAGE_MAX_CHARS) {
+      throw new StructuredError(
+        "internal_error",
+        `inline_replies[${i}].message 超出 ${COMMENT_MESSAGE_MAX_CHARS} 字符上限`,
+      );
+    }
+
+    const isPatchsetLevel = entry.file === "/PATCHSET_LEVEL";
+    if (isPatchsetLevel) {
+      if (entry.line !== undefined) {
+        // Gerrit 显式拒绝："Patchset-level comments can't have side, range, or line"
+        throw new StructuredError(
+          "internal_error",
+          `inline_replies[${i}]: patchset-level 评论不可携带 line 字段`,
+        );
+      }
+    } else {
+      if (!Number.isInteger(entry.line) || (entry.line as number) < 0) {
+        throw new StructuredError(
+          "internal_error",
+          `inline_replies[${i}].line 必须为非负整数（具体文件评论）；当前值 ${entry.line}`,
+        );
+      }
+    }
+
+    const inline: ReviewInputInlineComment = {
+      message: entry.message,
+      unresolved: entry.unresolved ?? false, // 默认 false：标记为 resolved
+    };
+    if (!isPatchsetLevel) inline.line = entry.line;
+    if (entry.in_reply_to) inline.in_reply_to = entry.in_reply_to;
+
+    if (!groupedByFile[entry.file]) groupedByFile[entry.file] = [];
+    groupedByFile[entry.file].push(inline);
+  }
+
+  // ⑥ 解析 patch set 编号
+  const patchSet =
+    typeof args.patch_set === "number" && args.patch_set > 0
+      ? args.patch_set
+      : await resolveCurrentPatchSet(args.change_id);
+
+  // ⑦ 构造完整 ReviewInput body
+  const reviewInput: ReviewInputBase = {
+    tag: "autogenerated:gerrit-mcp-server:submit_review_reply",
+    notify,
+    comments: groupedByFile,
+  };
+  if (coverMessage !== undefined) reviewInput.message = coverMessage;
+  if (labelsValidated !== null) reviewInput.labels = labelsValidated;
+
+  // ⑧ 通过 SSH 单次提交
+  const buf = Buffer.from(JSON.stringify(reviewInput), "utf8");
+  await sshGerritPlain(
+    [
+      "gerrit",
+      "review",
+      "--json",
+      `${escapeIdentifier(args.change_id)},${patchSet}`,
+    ],
+    buf,
+  );
+
+  return {
+    ok: true,
+    change_id: args.change_id,
+    patch_set: patchSet,
+    submitted_inline_count: args.inline_replies.length,
+    cover_message_included: coverMessage !== undefined,
+    labels_applied: labelsValidated,
+    notify,
+  };
 }

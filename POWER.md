@@ -1,14 +1,14 @@
 ---
 name: "whaletv-dev-power"
 displayName: "WhaleTV Developer Power"
-description: "面向 WhaleTV 开发者的 AI 辅助工具包，集成 Zmind 项目管理、OpenGrok 代码搜索和团队标准工作流"
+description: "面向 WhaleTV 开发者的 AI 辅助工具包，集成 Zmind 项目管理、OpenGrok 代码搜索、Gerrit MCP（14 工具，SSH 通道）和团队标准工作流"
 keywords: ["whaletv", "zmind", "gerrit", "opengrok", "cherry-pick", "pr", "cr", "android", "项目管理", "代码搜索", "gerrit-mcp", "commit-message"]
 author: "WhaleTV Team"
 ---
 
 # WhaleTV Developer Power
 
-面向 WhaleTV 全体开发者的 Kiro Power 工具包。集成 Zmind 项目管理、OpenGrok 代码搜索和团队标准工作流，使开发者在远程 Linux 服务器上通过 Kiro CLI 即可获得完整的 AI 辅助开发能力。
+面向 WhaleTV 全体开发者的 Kiro Power 工具包。集成 Zmind 项目管理、OpenGrok 代码搜索、Gerrit MCP（14 工具，SSH 通道）和团队标准工作流，使开发者在远程 Linux 服务器上通过 Kiro CLI 即可获得完整的 AI 辅助开发能力。
 
 ## Overview
 
@@ -26,9 +26,12 @@ author: "WhaleTV Team"
 
 - **Zmind 项目管理**：查询/创建/更新 Issue、工时记录、项目成员查询等工具
 - **OpenGrok 代码搜索**：全文搜索和符号定义查找，快速定位源码
+- **Gerrit MCP 集成**：14 个 Gerrit 工具（5 读 + 9 写，走 SSH 通道）—— Change/Branch 查询、`get_unresolved_threads` 拿评论 thread + UUID、`submit_review_reply` 一键批量 REPLY（cover + 多条 inline + label）、`push_to_gerrit` 推送（MP 分支硬拒绝）、`add/remove_reviewer`、`set_review_label`、`cherry_pick_change` 引导（高风险走 Web UI）
 - **PR/CR 工作流**：从获取 Issue 到推送 Gerrit 的全链路自动化
 - **Cherry-Pick 工作流**：跨代码库批量 CP 同步到 MP 分支
 - **Bug 分析工作流**：自动下载日志、解析异常、定位代码、生成报告
+- **Code Review 处理工作流**：处理 Gerrit-AI 评论的三态评估闭环（ACCEPT / REJECT / ACK），ACCEPT 必须先改代码 + push 新 patch set 才能回复，避免假闭环
+- **智能 Commit Message 生成**：基于 git diff + Zmind Issue + Branch_Detector 五级降级自动生成 `[版本号][类型][whaletv][Zmind#ID]` 五段式 commit message
 - **安全防护**：三层安全机制（规则约束 + Hook 拦截 + 人工确认）
 
 ### MCP 服务器
@@ -37,7 +40,7 @@ author: "WhaleTV Team"
 |--------|--------|------|
 | zmind-mcp-server | 15 | Issue 查询/创建/更新、附件下载、工时记录、项目管理 |
 | opengrok-mcp-server | 4 | 全文搜索、符号定义搜索、路径搜索、文件内容获取 |
-| gerrit-mcp-server | 12 | Gerrit Change/Branch/Comment 查询、Cherry-Pick、推送 refs/for/xxx、评论与 Reviewer/Label 管理（包名 `@kk-irving/gerrit-mcp-server`，stdio 传输，详见 `gerrit-workflow` / `pr-cr-workflow` / `cherry-pick-workflow` / `commit-message-workflow`） |
+| gerrit-mcp-server | 14 | Gerrit Change/Branch/Comment 查询、Cherry-Pick 引导、推送 refs/for/xxx、批量 Review Reply、Reviewer/Label 管理（包名 `@kk-irving/gerrit-mcp-server`，stdio 传输 + SSH 通道，详见 `gerrit-workflow` / `pr-cr-workflow` / `cherry-pick-workflow` / `commit-message-workflow` / `code-review-handling`） |
 
 ## Available Steering Files
 
@@ -47,6 +50,7 @@ author: "WhaleTV Team"
 - **cherry-pick-workflow** — 跨分支 Cherry-Pick 同步工作流，触发示例："把 #332669 cp 到 mp"
 - **bug-analysis-workflow** — Bug 自动分析工作流，触发示例："分析下 #334001"
 - **gerrit-workflow** — Gerrit 推送与评论处理，触发示例："推送代码到 Gerrit"
+- **code-review-handling** — Gerrit-AI / reviewer 评论的三态处理工作流（ACCEPT / REJECT / ACK），触发示例："处理评论"、"看看 Gerrit-AI 说了什么"
 - **commit-message-workflow** — 智能 Commit Message 生成器与 Branch_Detector 五级降级策略（与 PR/CR 流程衔接），触发示例："生成 commit message"
 - **local-code-guide** — 本地源码操作规范（搜索策略、目录结构），自动生效
 - **safety-rules** — 安全规则与三层防护体系，自动生效
@@ -109,9 +113,12 @@ Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请
 > - 使用 `@latest` 标签确保每次启动时自动获取最新版本
 > - `ZMIND_API_KEY` 必须配置在 mcp.json 的 `env` 字段中，仅设置系统环境变量不会生效
 > - `OPENGROK_USERNAME` 和 `OPENGROK_PASSWORD` 同样需要配置在 mcp.json 的 `env` 字段中
-> - `GERRIT_USERNAME` 和 `GERRIT_HTTP_PASSWORD` 同样需要配置在 mcp.json 的 `env` 字段中（使用 Gerrit Settings → HTTP Credentials 生成的 Token，**不是登录密码**）
+> - **`GERRIT_USERNAME` 必填**（gerrit-mcp-server v0.2.0+ 默认走 SSH 通道，端口 29418，把 `GERRIT_USERNAME` 用作 SSH 用户名）
+> - **SSH 公钥必须已上传到 Gerrit Settings → SSH Keys**（gerrit-mcp-server 的全部 14 个工具走 SSH，没有 SSH 公钥则全部不可用）
+> - `GERRIT_HTTP_PASSWORD` 在 v0.2.0 后是 **fallback 配置**（仅在 nginx 双层认证修复后切回 REST 通道时使用），目前**实际不消费**；为保持向后兼容仍建议填上
 > - 获取 Zmind API 密钥：登录 https://zmind.whaletv.com → 右上角"我的账户" → 左侧"API 访问密钥"
 > - 获取 Gerrit HTTP Password：登录 https://whale-gerrit.zeasn.com → User Settings → HTTP Credentials → Generate New Password
+> - 配置 SSH 公钥：登录 https://whale-gerrit.zeasn.com → User Settings → SSH Keys → 粘贴 `~/.ssh/id_rsa.pub` 内容
 
 ### 环境变量说明
 
@@ -123,10 +130,13 @@ Power 的 MCP 服务器需要通过 Kiro 的 `mcp.json` 配置环境变量。请
 | OPENGROK_USERNAME | OpenGrok 用户名 | ✅ 是 | 无 |
 | OPENGROK_PASSWORD | OpenGrok 密码 | ✅ 是 | 无 |
 | OPENGROK_PROJECT | 默认搜索项目名 | ❌ 否 | 无（搜索所有项目） |
-| GERRIT_URL | Gerrit 服务完整 HTTPS URL（如 `https://whale-gerrit.zeasn.com`） | ✅ 是 | 无 |
-| GERRIT_USERNAME | Gerrit 用户名 | ✅ 是 | 无 |
-| GERRIT_HTTP_PASSWORD | Gerrit HTTP Password（在 Gerrit Settings → HTTP Credentials 生成的 Token，非登录密码） | ✅ 是 | 无 |
-| GERRIT_TIMEOUT_MS | Gerrit 单次 HTTP 请求超时（毫秒，正整数） | ❌ 否 | 30000 |
+| GERRIT_URL | Gerrit 服务完整 HTTPS URL（如 `https://whale-gerrit.zeasn.com`），用于推断 SSH 主机名 + 拼接 Web URL | ✅ 是 | 无 |
+| GERRIT_USERNAME | Gerrit 用户名（v0.2.0+ 用作 SSH 用户名；SSH 公钥必须已上传到 Gerrit Settings → SSH Keys） | ✅ 是 | 无 |
+| GERRIT_HTTP_PASSWORD | Gerrit HTTP Password；v0.2.0+ 默认走 SSH 通道**不消费**此值，但保留作 fallback；nginx 双层认证修复后可切回 REST 时使用 | ⚠️ Fallback | 无 |
+| GERRIT_TIMEOUT_MS | Gerrit 单次 SSH/HTTP 请求超时（毫秒，正整数） | ❌ 否 | 30000 |
+| GERRIT_SSH_HOST | 显式指定 Gerrit SSH 主机名（默认从 `GERRIT_URL` 提取 hostname） | ❌ 否 | 来自 GERRIT_URL |
+| GERRIT_SSH_PORT | Gerrit SSH 端口 | ❌ 否 | 29418 |
+| GERRIT_SSH_USER | 显式指定 Gerrit SSH 用户名（默认 fallback 到 `GERRIT_USERNAME`） | ❌ 否 | 来自 GERRIT_USERNAME |
 
 ### 配置验证
 
@@ -142,7 +152,10 @@ curl -s -o /dev/null -w "%{http_code}" "${ZMIND_URL:-https://zmind.whaletv.com}/
 # 验证 OpenGrok 连接（应返回 200）
 curl -s -o /dev/null -w "%{http_code}" "$OPENGROK_URL/api/v1/configuration"
 
-# 验证 Gerrit 连接（应返回 200，并输出当前认证用户的 JSON）
+# 验证 Gerrit 连接 — v0.2.0+ 主通道 SSH（应返回 "gerrit version 3.6.0"）
+ssh -p 29418 "$GERRIT_USERNAME@whale-gerrit.zeasn.com" gerrit version
+
+# 验证 Gerrit REST fallback（部署环境 nginx 双层认证下预期返回 401，仅做 fallback；不影响主流程）
 curl -u "$GERRIT_USERNAME:$GERRIT_HTTP_PASSWORD" "$GERRIT_URL/a/accounts/self"
 
 # 检查 Node.js 版本（需要 18+）
@@ -221,23 +234,25 @@ cd ~/cvte_code/amlogic && kiro
 
 ## Gerrit MCP Server 工具列表
 
-### 读工具（4 个）
+### 写工具（9 个）
 
-- `query_change` — 查询单个 Change 的详情（subject、status、project、branch、owner、当前 patch set、Topic、关联的 Zmind Issue ID）
-- `list_branches` — 列出指定 project 下的分支，支持分支名子串过滤（常用于发现 `_mp` 系列 MP 分支）
-- `get_change_comments` — 获取指定 Change 上的全部评论（review + inline，按时间升序，含 `unresolved` 标志）
-- `search_changes` — 按 Gerrit 查询语法搜索 Change 列表（如 `topic:332669 status:merged branch:master`，limit 默认 25 上限 100）
-
-### 写工具（8 个）
-
-- `cherry_pick_change` — 通过 Gerrit REST 在目标分支上触发 cherry-pick，三态返回 `success` / `skipped_already_merged` / `conflict`（含冲突文件列表）
+- `cherry_pick_change` — ⚠️ 高风险操作；SSH 通道下不支持自动执行（Gerrit SSH 命令集无 cherry-pick 子命令），固定返回 `status="manual_required"` + Web UI 链接，由 Developer 手动在 Gerrit Web UI 完成
 - `push_to_gerrit` — 推送本地 commit 到 `refs/for/<target_branch>`，支持 reviewers / wip / topic 选项；自动拒绝向 `*_mp` 分支推送
-- `add_review_comment` — 向 Change 添加 review 级别评论（可附带 Code-Review/Verified 等 label）
-- `reply_inline_comment` — 在已有 inline 评论上发布回复，可同时设置 `unresolved` 标志
-- `mark_comment_resolved` — 将指定 inline 评论标记为已解决（不附加新文本）
+- `submit_review_reply` — ★ Web UI "REPLY" 按钮的批量等价：一次 SSH 调用同时提交多条 inline 回复 + cover message + label，触发 1 次通知（不是每条评论 1 次）；处理多条 gerrit-ai 评论的标准方式
+- `add_review_comment` — 向 Change 添加 review-cover 级评论
+- `reply_inline_comment` — 单条快速回复（批量场景请用 submit_review_reply）；按 file+line anchor 定位
+- `mark_comment_resolved` — 单条快速 mark resolved（批量场景请用 submit_review_reply）
 - `add_reviewer` — 向 Change 添加 Reviewer（接受邮箱或用户名）
 - `remove_reviewer` — 从 Change 的 Reviewer 列表中移除指定用户
 - `set_review_label` — 在当前 patch set 上设置标签（如 `Code-Review`、`Verified`），值范围 -2 至 +2
+
+### 读工具（5 个）
+
+- `query_change` — 查询单个 Change 的详情（subject、status、project、branch、owner、当前 patch set、Topic、关联的 Zmind Issue ID）
+- `list_branches` — 列出指定 project 下的分支，支持分支名子串过滤（常用于发现 `_mp` 系列 MP 分支）
+- `get_change_comments` — 获取指定 Change 上的全部评论（review + inline，按时间升序）；走 SSH `gerrit query --comments`，**仅适合展示阅读**，不含 uuid / unresolved 字段
+- `get_unresolved_threads` — ★ 处理 PR/CR 评论闭环的关键入口：返回当前 patch set 上每个 unresolved thread 的 `root_uuid` + 完整 thread chain，AI 据此调用 `submit_review_reply` 时设 `in_reply_to` 建立真正的 thread 关系；走 SSH `git fetch` Gerrit NoteDb meta ref（多一次网络往返但拿全 uuid + unresolved 字段）
+- `search_changes` — 按 Gerrit 查询语法搜索 Change 列表（如 `topic:332669 status:merged branch:master`，limit 默认 25 上限 100）
 
 ## 安全机制
 

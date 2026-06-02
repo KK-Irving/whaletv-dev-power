@@ -87,26 +87,65 @@ IF 用户拒绝 → 终止流程，不执行任何 CP 操作
 
 ---
 
-### ⑤ 批量执行 Cherry-Pick
+### ⑤ 触发 Cherry-Pick（manual_required 引导）
 
-**AI 动作**: 按 CP 计划表格逐项调用 Gerrit MCP Server 的 `cherry_pick_change` 工具。
+> ⚠️ **本步骤已不再自动批量执行 CP**。
+> 因 Gerrit SSH 命令集没有 cherry-pick 子命令、且目标环境的 nginx 双层认证使 REST 不可用，
+> 加之 cherry-pick 是高风险操作（误推到错分支极易污染 MP 分支线），
+> 工具固定返回 `status="manual_required"` + Web UI 链接，由 **Developer 在 Gerrit Web UI 手动完成**。
 
-**调用参数**：`{ change_id: <源 Change>, destination_branch: <目标 MP 分支> }`
+**AI 动作**：
 
-**结果分类汇报**（按返回的 status 字段）：
+1. 按 CP 计划表格**逐项**调用 Gerrit MCP Server 的 `cherry_pick_change` 工具，工具返回：
+   ```json
+   {
+     "status": "manual_required",
+     "web_url": "https://whale-gerrit.zeasn.com/q/<change_id>",
+     "destination_branch": "<目标分支>",
+     "change_id": "<源 Change>",
+     "reason": "Gerrit SSH 通道不支持 cherry-pick 操作 ...",
+     "instructions": [
+       "1. 打开 Change 页面: <web_url>",
+       "2. 点击页面右上角菜单 (⋮) → 'Cherry pick'",
+       "3. 在弹出对话框的 'Branch' 字段输入: <目标分支>",
+       "4. 保留默认 commit message，或编辑后再提交",
+       "5. 点击 'CHERRY PICK' 按钮完成",
+       "6. 完成后请告诉 AI 操作结果"
+     ]
+   }
+   ```
 
-| status | 含义 | 汇报方式 |
-|--------|------|----------|
-| `success` | CP 成功，已创建新 Change | ✅ 列出新 Change 的 Web URL |
-| `skipped_already_merged` | 目标分支已包含等效提交 | ⏭️ 友好告知，无需操作 |
-| `conflict` | 代码冲突，无法自动 CP | ❌ 列出 `conflicting_files`，提示 Developer 手动 cherry-pick |
-| (抛错) `error_type=not_found` | 目标分支不存在或权限不足 | ⚠️ 列出失败的目标分支 |
-| (抛错) 其他 | 网络/权限/服务器错误 | 报告具体 `error_type` 与 `message` |
+2. AI 把每条 `manual_required` 的引导集中展示给 Developer，列表形式：
+   ```
+   📋 共 N 条 Cherry-Pick 需要 Developer 手动完成（Gerrit Web UI）：
+   
+   1. I1234567 → os10_mp:
+      🔗 https://whale-gerrit.zeasn.com/q/I1234567
+   
+   2. I7654321 → os10_3_mp:
+      🔗 https://whale-gerrit.zeasn.com/q/I7654321
+   
+   操作步骤（每条相同）：
+      ① 打开链接 → ⋮ → "Cherry pick"
+      ② Branch 字段填入对应目标分支
+      ③ 点击 "CHERRY PICK" 按钮
+   
+   完成后请告诉我每条的结果（success / conflict / 已存在），我会继续后续工作流。
+   ```
+
+3. **等待** Developer 逐条回报结果，按以下三态收集：
+   - `success` — Web UI 创建了新 Change，让 Developer 提供新 Change URL（用于 Zmind 评论）
+   - `conflict` — Web UI 报告冲突，标记为待人工 resolve
+   - `already_exists` / `skipped` — 目标分支已包含等效提交
 
 **关键约束**：
-- 每个 CP 都是独立 MCP 工具调用，单个失败不阻塞其余
-- 失败列表与成功列表都汇总后展示给 Developer
-- 涉及 MP 分支的 CP 在执行前已通过步骤 ④ 用户确认
+- ❌ **不要**通过本地 `git fetch + cherry-pick + push` 自动化 CP（会丢失 `cherryPickOfChange` 元数据，破坏 Gerrit 的 cherry-pick 链路追溯）
+- ❌ **不要**跳过 Developer 手动确认就假装 CP 完成（误操作风险高）
+- ✅ AI 的角色是**引导**而非**执行**：把 Web URL + 步骤清晰列出，等 Developer 回报
+
+**预期输出**：所有 CP 已被 Developer 在 Web UI 完成；AI 收集到每条结果（success / conflict / skipped）
+
+**错误处理**：IF Developer 报告 conflict，THEN 询问是否需要 AI 协助本地手动 resolve（仍由 Developer 主导）；IF Developer 报告"目标分支不存在"，THEN 检查 list_branches 输出是否包含该分支
 
 ---
 

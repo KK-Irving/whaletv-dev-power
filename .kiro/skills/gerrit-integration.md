@@ -15,7 +15,7 @@ inclusion: auto
 > | `ssh -p 29418 ... gerrit version`（连接验证） | `curl -u "$GERRIT_USERNAME:$GERRIT_HTTP_PASSWORD" "$GERRIT_URL/a/accounts/self"` |
 > | `gerritpush` | `push_to_gerrit(cwd, target_branch, reviewers?, wip?, topic?)` |
 > | 手工浏览器查 Gerrit Change 评论 | `get_change_comments(change_id)`（按时间升序） |
-> | 手工查 cherry-pick 历史 / 手动 cherry-pick | `cherry_pick_change(change_id, destination_branch)`（三态：success / skipped_already_merged / conflict） |
+> | 手工查 cherry-pick 历史 / 手动 cherry-pick | `cherry_pick_change(change_id, destination_branch)` 返回 `manual_required` + Web URL（高风险操作不自动执行，由 Developer 在 Web UI 完成） |
 >
 > **本 Skill 仅在以下兜底场景仍有参考价值**：
 > - `gerrit-mcp-server` 暂未在你的环境启用 / 配置不完整
