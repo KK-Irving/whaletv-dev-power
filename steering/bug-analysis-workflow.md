@@ -17,64 +17,44 @@
 **预期输出**: Issue 完整详情，特别关注 subject、description、attachments、journals
 **错误处理**: IF `get_issue` 调用失败，THEN 报告错误信息并记录到 `.learnings/ERRORS.md`，等待用户指示
 
+> **v2 一键模式**：如果用户描述较为清晰（含具体 issue 编号），优先调 `analyze_issue(issue_id, include_aosp=true)` 一次串完步骤 ① 到 ⑥（拉 issue → 工作目录 → 关键词 → 三源 hybrid 检索 → 平台/模块推断 → AOSP 精搜 → 渲染 analysis-context.md）。详见 `knowledge-base-workflow.md`。本工作流的分步流程作为 `analyze_issue` 失败回退或需要更细控制时使用。
+
 ### ①.5 检索历史经验
 
-**AI 动作**: 在 `.learnings/LEARNINGS.md` 和 `.learnings/ERRORS.md` 中搜索与当前 Issue 相关的历史记录（按模块名、异常类名、关键词搜索）。同时通过 Confluence 搜索内部文档中是否有相关已知问题。
+**AI 动作**: 多源并行：
 
-- IF 找到相关历史经验 → 展示给用户："发现历史相关经验：[摘要]，上次的解决方案是 [方案]"
+1. **本地 `.learnings/`**：在 `.learnings/LEARNINGS.md` 和 `.learnings/ERRORS.md` 中搜索关键词（模块名、异常类名）
+2. **`search_local(source="all", mode="hybrid")`**（v2 起 ★ 推荐）：在本地知识库（zmind PR + gerrit changes + confluence pages）做毫秒级跨源检索，找类似历史 PR、修复 commit、设计文档
+3. （fallback）`search_confluence` live 调用文档中心
+
+- IF 找到相关历史经验 → 展示给用户："发现历史相关经验：[摘要]，上次的解决方案是 [方案]，对应 [URL]"
 - IF 未找到 → 继续正常流程
 
-**预期输出**: 历史经验参考（如有）
+**预期输出**: 历史经验参考（如有）+ 各源 Top-K 命中
 **错误处理**: 搜索失败不阻塞主流程，继续下一步
 
-### ② 识别附件
+### ② 一站式准备工作目录（v2.0.0 推荐）
 
-**AI 动作**: 遍历 Issue 的 attachments 列表，按以下规则分类识别所有附件：
+**AI 动作**: 调用 zmind-mcp-server 的 `prepare_issue_workspace(issue_id, workspace_root)` 工具，一次性完成：
+- 创建 `.workspace/issue-<id>/` 目录（含 attachments/ extracted/ 子目录）
+- 下载所有附件到 `attachments/`
+- 按类型自动路由：
+  - `.log` `.txt` `.xml` `.json` `.conf` 等文本 → 直接落盘
+  - `.zip` → 自动解压到 `extracted/<name>/`
+  - `.tar.gz` `.tgz` → 自动解压
+  - `.7z` `.rar` → 落盘 + 检测本机 7z 命令
+  - HCI / btsnoop log → 落盘 + 检测本机 tshark
+  - PDF → 落盘 + 检测本机 pdftotext
+  - 图片（png/jpg/gif/bmp）→ 落盘，AI 后续用 read_file + vision 读
+  - 视频 → 默认跳过下载（避免大文件），可显式 `skip_video: false` 关闭
+- 写 `README.md` 索引
 
-**可直接分析的附件**（自动下载）：
-- 日志文件：文件名包含 `log`、`logcat`、`trace`、`tombstone`，或扩展名为 `.log`、`.txt`
-- 配置/代码文件：扩展名为 `.xml`、`.json`、`.conf`、`.prop`、`.java`、`.kt`
-
-**需要用户确认的附件**（展示信息，询问是否需要）：
-- 压缩包：扩展名为 `.gz`、`.zip`、`.tar`、`.7z`、`.rar`（可能包含日志）
-- 图片：扩展名为 `.png`、`.jpg`、`.jpeg`、`.gif`、`.bmp`（可能是截图/现象图）
-- 视频：扩展名为 `.mp4`、`.avi`、`.mov`、`.mkv`（可能是复现视频）
-- 文档：扩展名为 `.pdf`、`.doc`、`.docx`、`.xls`、`.xlsx`
-
-**展示格式**：
-```
-📎 Issue 附件列表：
-
-可直接分析：
-1. logcat_20260515.log (128 KB) — 日志文件，将自动下载分析
-2. crash_trace.txt (45 KB) — 日志文件，将自动下载分析
-
-需要确认：
-3. screenshot_error.png (2.1 MB) — 截图，是否需要查看？
-4. logs_full.zip (15 MB) — 压缩包，可能包含完整日志，是否需要下载？
-
-无附件类型：（无）
-```
-
-**预期输出**: 分类后的附件列表，自动下载可分析的文件，询问用户是否需要处理其他附件
-**错误处理**: IF 附件列表为空或无匹配文件，THEN 标注"无附件"，进入步骤 ③' 从描述提取错误信息
-
-### ③ 下载并解析附件 / 从描述提取错误信息
-
-**IF 有可分析的附件**:
-
-**AI 动作**: 调用 `download_attachment` 工具下载日志/文本附件并读取内容。对于压缩包（用户确认需要时），提示用户手动解压后提供日志文件路径。
-**预期输出**: 日志/文本内容，准备进入步骤 ④ 提取异常信息
-
-**IF 无可分析的附件**:
-
-**AI 动作**: 从 Issue 描述文本和评论中提取错误信息（如异常堆栈、错误截图描述、复现步骤中的错误现象）。在分析报告中标注"无日志附件，基于 Issue 描述分析"
-**预期输出**: 从描述中提取的错误信息片段
-**错误处理**: IF 描述中也无明确错误信息，THEN 在报告中标注"无日志附件且描述中无明确错误信息"，列出 Issue 描述全文作为参考
+**预期输出**: 工作目录已就绪，附件清单 + 处理结果 + AI 后续 hint
+**错误处理**: IF 调用失败 THEN 回退到旧的逐个 download_attachment 流程
 
 ### ④ 提取异常信息
 
-**AI 动作**: 从日志或描述中提取以下关键信息：
+**AI 动作**: 从 prepare_issue_workspace 返回的附件结果中读取日志/文本（text_content 或 read_file extracted/），从中提取以下关键信息：
 
 1. **异常堆栈**: Exception/Error 及其完整调用链（如 `java.lang.NullPointerException` + `at com.xxx.ClassName.methodName(File.java:123)`）
 2. **时间点事件**: 异常发生前后 5 秒内的关键事件（如 Activity 生命周期、Service 启停、广播接收等）
@@ -85,13 +65,12 @@
 
 ### ⑤ 本地代码定位
 
-**AI 动作**: 按以下顺序定位代码：
+**AI 动作**: 按 `local-code-guide.md` 的 5 档搜索策略：
 
-1. **先查模块路径地图**（`module-path-map.md`）：从异常信息/Issue 描述中提取关键词（类名、模块名、功能名如 "TvScanConfig"、"TvSettings"、"PQ"、"CEC"），在地图的"典型问题 → 路径推荐对照表"或对应平台小节中查找路径前缀
-2. 命中地图后，用路径前缀**限定搜索范围**：
-   - 本地：`git grep -n "ClassName" -- "<path-prefix>/**"`（去掉 wrapper 目录前缀，相对源码根）
-   - OpenGrok：`search_code` + 结果再筛 path 或 `search_path` 先收敛
-3. 未命中地图时，按 local-code-guide 的标准优先级（① git grep 全仓 → ② 读取已知路径 → ③ OpenGrok `search_symbol`）
+1. **模块路径地图查表**（`module-path-map.md`）：从异常信息/Issue 描述中提取关键词（类名、模块名、功能名如 "TvScanConfig"、"TvSettings"、"PQ"、"CEC"），在地图的对应平台小节中找路径前缀
+2. **本地知识库 `search_local(source="gerrit")`**（v2 起 ★ 推荐）：找历史改过该模块的 commit，看 commit_message 里描述哪个文件 / 函数 → 直读
+3. 用路径前缀**限定 git grep 搜索范围**：`git grep -n "ClassName" -- "<path-prefix>/**"`（去掉 wrapper 目录前缀，相对源码根）
+4. 未命中时按 local-code-guide 标准优先级（git grep 全仓 → 读取已知路径 → OpenGrok `search_symbol`）
 
 **预期输出**: 定位到相关代码的文件路径和行号
 

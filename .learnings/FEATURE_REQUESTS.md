@@ -123,3 +123,126 @@
 | 总目录采样 | 631 | 632 | 695 |
 
 ---
+
+
+## FR-002 ~ FR-009: v2 平台升级（按 .kiro/specs/v2-platform-upgrade）
+
+**状态**: ✅ **P0 / P0+ / P1 / P2 / P3 全部完成**（2026-06-11）；smoke test 19/19 通过；待 npm publish 上线
+**优先级**: 高（P0 解锁 v1.0.0 卡顿能力，P1+ 引入跨源知识库）
+**Spec**: [`.kiro/specs/v2-platform-upgrade/`](../.kiro/specs/v2-platform-upgrade/)
+**Smoke 报告**: [`.learnings/v2-smoke-test-results.md`](v2-smoke-test-results.md)
+
+### 阶段进度
+
+| 阶段 | 范围 | 状态 |
+|------|------|------|
+| **P0-A** | Gerrit 双层认证修复（gerrit-mcp v1.1.0） | ✅ 代码完成 + smoke 通 |
+| **P0-B** | 附件解压增强（RAR5 三档降级 + 0 字节防御 + extract_ok 缓存） | ✅ 代码完成 |
+| **P0-C** | Aliyun WAF 重试 + 进程级速率/并发门（zmind-mcp v2.1.1） | ✅ 代码完成 |
+| **P0+** | Playwright 凭据自动刷新脚本（refresh-auth.{ps1,sh,mjs}），含 Gerrit SSO + Confluence form login 双账号 | ✅ 代码完成 + smoke 通 |
+| **P1-Conf** | confluence-mcp-server v1.0.0 | ✅ 代码完成 + 3/3 工具通 |
+| **P1-Knowledge** | knowledge-mcp-server v1.0.0（向量+FTS5 hybrid 检索） | ✅ 代码完成 + sync/embed/search 全通 |
+| **P2** | AOSP 模块级精搜 + analyze_issue 一键工作流 | ✅ 代码完成 + 编译通过 |
+| **P3** | POWER.md / README.md / steering 升级 + setup-v2 部署脚本 | ✅ 完成（2026-06-11） |
+
+### FR-002: Gerrit 双层认证支持
+
+**问题**: v1.0.0 走 `/a/` 路径 + 单 Basic Auth 头，过不了公司 nginx + Gerrit 双层认证（401）。
+
+**方案**: 双通道认证模式
+- **session 模式（首选）**: `GERRIT_AUTH_HEADER` (raw "Basic xxx" 过 nginx) + `GERRIT_COOKIE` (raw "GerritAccount=...; XSRF_TOKEN=..." 过 Gerrit)，走 non-/a/ 路径
+- **basic 模式（备选）**: `GERRIT_USERNAME` + `GERRIT_HTTP_PASSWORD`，走 /a/ 路径
+- 基于 HTTP 协议允许 1 Authorization + 1 Cookie 头同时存在的事实
+
+**实施**: `mcp-servers/gerrit-mcp-server/src/auth.ts` + `http-client.ts` 双通道决策表，错误信息按当前模式给出针对性诊断。
+
+**验收标准**:
+- [x] auth.ts 决策表实现 (`session` | `basic` | `missing`)
+- [x] http-client.ts 路径前缀按模式切换、headers 按模式构造
+- [x] 401 错误信息按当前模式分支给出诊断（cookie 过期 vs HTTP_PASSWORD 错）
+- [x] 启动 banner 输出 auth_mode 标识（不输出凭据值）
+- [x] 14 个工具对外契约 100% 兼容
+- [x] 编译通过、零 lint 错
+- [ ] **真实凭据 smoke test**（query_change / search_changes / get_unresolved_threads 等核心工具调用 200 通过）
+
+### FR-003: 凭据自动刷新脚本（P0+）
+
+**问题**: cookie 过期（1-4 周）需要用户手动 F12 复制，痛点高。
+
+**方案**: `scripts/refresh-auth.{ps1,sh,mjs}` 用 Playwright headless 自动登录，提取 cookie + 计算 Authorization，写入 `~/.kiro/settings/mcp.json`，自检通过才完成。
+
+**状态**: 待开始
+
+### FR-004: 附件解压能力增强
+
+**问题**:
+1. RAR5（WinRAR 5.x 客户/QA 常用）解压不了
+2. 旧 p7zip 处理 RAR5 会返回成功状态码但产生 0 字节占位文件，下游分析"日志为空"
+3. 没有缓存机制，重复解压
+
+**方案**:
+- 三档降级：unar（RAR5 原生）→ unrar → 7z
+- `hasUsefulContent(dir)`: 0 字节防御（验证至少有 1 个非 0 字节文件）
+- `<archive>.extracted_ok` stamp: 缓存解压结果，归档变化时失效
+- `flattenSingleDirWrap()`: 单 wrap 子目录自动展平
+- magic bytes 识别 RAR/7z（`Rar!` / `7z\xBC\xAF`）+ xz delegate 给 tar
+- 失败不阻塞：仅记入 failed_extractions，继续处理后续附件
+
+**实施**: `mcp-servers/zmind-mcp-server/src/attachment-handler.ts` 新增 `extractRarOrSevenz` / `hasUsefulContent` / `flattenSingleDirWrap` / `runProcess` / `summarizeDir`。
+
+**验收标准**:
+- [x] 三档降级实现
+- [x] 0 字节防御实现
+- [x] extracted_ok stamp 缓存逻辑
+- [x] wrap 目录自动展平
+- [x] magic bytes 识别 RAR/7z/xz
+- [x] 编译通过、零 lint 错
+- [ ] 真实 .rar 测试（RAR5 + RAR3 各一个）
+
+### FR-005: Aliyun WAF 限速应对
+
+**问题**: 公司 Zmind 部署在 Aliyun WAF 后，单连接突发请求 5+ 时返回 403/429/502/503，导致整个 PR 下载中断。
+
+**方案**:
+- `zmindFetch()` 包装：触发码 `[403, 429, 502, 503]` 时重试
+- 退避 = `0.8s × attempt`，最多 5 次
+- retry 时强制 `Connection: close` 头，让服务器关闭连接，下一次请求落到新连接（避开 per-connection 计数）
+- 进程级速率门 `ZMIND_HTTP_MIN_INTERVAL`（毫秒，默认 0=禁用）
+- 进程级并发门 `ZMIND_FETCH_CONCURRENCY`（默认 2）
+
+**实施**: `mcp-servers/zmind-mcp-server/src/http-client.ts` 新建，所有出站 fetch（attachment-handler + index 的 redmineGet/Put/Post + download_attachment）替换为 `zmindFetch`。
+
+**验收标准**:
+- [x] WAF 重试包装实现（4 个状态码 × 5 次 attempts × 线性退避）
+- [x] Connection: close 强制 fresh connection 行为
+- [x] 进程级速率门（promise chain 串行化避免并发跳过）
+- [x] 进程级并发门（semaphore + waiters 队列）
+- [x] 启动 banner 输出 HTTP client 配置摘要
+- [x] 编译通过、零 lint 错
+- [ ] 真实 WAF 限速场景测试（连续 6+ 个附件下载触发 403 后能恢复）
+
+### FR-006: 文档中心（Confluence）MCP（P1）
+
+**目标**: `confluence-mcp-server` v1.0.0，3 个工具（search / get_page / list_spaces），CQL 搜索 + cookie 认证。
+
+**状态**: 待开始
+
+### FR-007: 本地知识库（向量+FTS5 hybrid）（P1）
+
+**目标**: `knowledge-mcp-server` v1.0.0，三源（zmind / gerrit / confluence）同步 + BGE-small-zh ONNX 嵌入 + SQLite BLOB 存向量 + FTS5 全文 + hybrid 跨源检索。
+
+**状态**: 待开始
+
+### FR-008: AOSP 模块级精搜 + analyze_issue 工作流（P2）
+
+**目标**: 在 knowledge-mcp 上加 `index_aosp_module` / `search_aosp` 利用 module-path-map 做模块级精搜；zmind-mcp 加 `analyze_issue` 一键串起 workspace 创建 + 三源检索 + AOSP 检索 + context.md 渲染。
+
+**状态**: 待开始
+
+### FR-009: setup-v2 部署脚本（P3）
+
+**目标**: `scripts/setup-v2.{ps1,sh}` 一键依赖检查 + Playwright 安装 + 凭据刷新 + 嵌入模型下载 + 5 个 MCP server 注入。
+
+**状态**: 待开始
+
+---

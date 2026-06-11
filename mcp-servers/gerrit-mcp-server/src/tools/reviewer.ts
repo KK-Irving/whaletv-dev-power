@@ -1,87 +1,37 @@
 /**
- * Reviewer / Code-Review 标签管理工具 (SSH 通道)。
+ * Reviewer / Code-Review 标签管理工具 (REST 通道，v1.0.0)。
  *
- * 实现：
- *   - addReviewer:    `gerrit set-reviewers --add <user> <change>`
- *   - removeReviewer: `gerrit set-reviewers --remove <user> <change>`
- *   - setReviewLabel: `gerrit review --label <NAME>=<VALUE> <change,patchset>`
- *
- * 实证（2026-06，change 114401）：
- *   - set-reviewers --add will.huang@zeasn.com 114401  → 静默退出 0
- *   - 通过 `gerrit query --all-reviewers` 验证 will.huang 出现在 allReviewers 列表
- *   - --remove 同样工作正常
+ * 端点：
+ *   - addReviewer:    POST /a/changes/{id}/reviewers, body { reviewer: <emailOrUsername> }
+ *   - removeReviewer: DELETE /a/changes/{id}/reviewers/{accountIdentifier}
+ *   - setReviewLabel: POST /a/changes/{id}/revisions/{rev}/review, body { labels: { name: value } }
  *
  * 输入校验：
  *   - reviewer 非空（trim 后长度 > 0）
  *   - label 非空、value 必须是 [-2, +2] 整数（Property 13）
  *
  * 错误处理：
- *   - SSH 子进程错误统一映射到 StructuredError（由 ssh-client.ts 处理）
+ *   - HTTP 错误统一映射到 StructuredError（由 http-client.ts 处理）
  *   - 错误消息保留 change_id / reviewer / label（Property 5，由 wrapToolHandler 注入）
  */
 
-import { sshGerritPlain } from "../ssh-client.js";
+import { gerritPost, gerritDelete } from "../http-client.js";
 import { StructuredError } from "../errors.js";
-
-// =============================================================================
-// 内部辅助
-// =============================================================================
-
-function escapeIdentifier(token: string): string {
-  const trimmed = token.trim();
-  if (trimmed.length === 0) {
-    throw new StructuredError("internal_error", "标识符不可为空");
-  }
-  if (/[\s`"'\\]/.test(trimmed)) {
-    throw new StructuredError(
-      "internal_error",
-      `标识符包含非法字符: ${trimmed}`,
-    );
-  }
-  return trimmed;
-}
-
-/**
- * 取 change 的 currentPatchSet.number；setReviewLabel 用。
- * 不复用 query.ts 的 queryChange 避免循环依赖。
- */
-async function resolveCurrentPatchSet(changeId: string): Promise<number> {
-  const { sshGerritJson } = await import("../ssh-client.js");
-  const { rows } = await sshGerritJson<{ currentPatchSet?: { number?: number } }>([
-    "gerrit",
-    "query",
-    "--format=JSON",
-    "--current-patch-set",
-    `change:${escapeIdentifier(changeId)}`,
-  ]);
-  if (rows.length === 0) {
-    throw new StructuredError(
-      "not_found",
-      `Change 不存在或不可见: change_id=${changeId}`,
-      404,
-    );
-  }
-  const ps = rows[0].currentPatchSet?.number;
-  if (typeof ps !== "number" || !Number.isFinite(ps) || ps <= 0) {
-    throw new StructuredError(
-      "internal_error",
-      `Change ${changeId} 缺少 currentPatchSet.number`,
-    );
-  }
-  return ps;
-}
+import { queryChange } from "./query.js";
 
 // =============================================================================
 // 1. addReviewer
 // =============================================================================
 
 /**
- * 向 Change 添加一名 Reviewer（SSH 通道）。
+ * 向 Change 添加一名 Reviewer。
  *
- * @param args.reviewer email / username / numeric account-id（Gerrit 任一形式接受）
+ * 端点：POST /a/changes/{id}/reviewers
+ * Body: { "reviewer": "alice@example.com" }
+ *
+ * Gerrit 接受 email / username / numeric account-id 任一形式。
  *
  * @throws StructuredError("internal_error") reviewer 为空或仅含空白
- * @throws StructuredError(...)              SSH 错误透传（permission_denied / not_found 等）
  */
 export async function addReviewer(args: {
   change_id: string;
@@ -90,19 +40,15 @@ export async function addReviewer(args: {
   if (typeof args.reviewer !== "string" || args.reviewer.trim().length === 0) {
     throw new StructuredError("internal_error", "Reviewer 标识符不可为空");
   }
+  const reviewer = args.reviewer.trim();
 
-  await sshGerritPlain([
-    "gerrit",
-    "set-reviewers",
-    "--add",
-    args.reviewer.trim(),
-    escapeIdentifier(args.change_id),
-  ]);
+  const path = `/changes/${encodeURIComponent(args.change_id)}/reviewers`;
+  await gerritPost(path, { reviewer });
 
   return {
     ok: true,
     change_id: args.change_id,
-    reviewer: args.reviewer.trim(),
+    reviewer,
   };
 }
 
@@ -111,10 +57,11 @@ export async function addReviewer(args: {
 // =============================================================================
 
 /**
- * 从 Change 移除一名 Reviewer（SSH 通道）。
+ * 从 Change 移除一名 Reviewer。
  *
- * @throws StructuredError("internal_error") reviewer 为空或仅含空白
- * @throws StructuredError(...)              SSH 错误透传
+ * 端点：DELETE /a/changes/{id}/reviewers/{accountIdentifier}
+ *
+ * accountIdentifier 接受 username / email / "Self" / numeric account-id。
  */
 export async function removeReviewer(args: {
   change_id: string;
@@ -123,19 +70,15 @@ export async function removeReviewer(args: {
   if (typeof args.reviewer !== "string" || args.reviewer.trim().length === 0) {
     throw new StructuredError("internal_error", "Reviewer 标识符不可为空");
   }
+  const reviewer = args.reviewer.trim();
 
-  await sshGerritPlain([
-    "gerrit",
-    "set-reviewers",
-    "--remove",
-    args.reviewer.trim(),
-    escapeIdentifier(args.change_id),
-  ]);
+  const path = `/changes/${encodeURIComponent(args.change_id)}/reviewers/${encodeURIComponent(reviewer)}`;
+  await gerritDelete(path);
 
   return {
     ok: true,
     change_id: args.change_id,
-    reviewer: args.reviewer.trim(),
+    reviewer,
   };
 }
 
@@ -144,21 +87,27 @@ export async function removeReviewer(args: {
 // =============================================================================
 
 /**
- * 在 Change 当前 patch set 上设置一个标签值（如 Code-Review / Verified）。
+ * 在 Change 当前 patch set 上设置一个标签值。
  *
- * SSH 命令：`gerrit review --label NAME=VALUE <change,patchset>`
+ * 端点：POST /a/changes/{id}/revisions/{rev}/review
+ * Body: { labels: { "Code-Review": +1 } }
  *
- * 注意：SSH 不接受 "current" 作为 patchset 占位符，必须用具体数字；
- * 因此本函数会先调用 query 拿到 currentPatchSet.number。
+ * REST 接受字符串 "current" 作为 patch set 占位符（不像 SSH 必须传具体数字）；
+ * 但为了能在响应里返回具体 patch set 编号，仍先 query 一次。
  *
  * @throws StructuredError("internal_error") label 为空 / value 超范围
- * @throws StructuredError(...)              SSH 错误透传（permission_denied 等）
  */
 export async function setReviewLabel(args: {
   change_id: string;
   label: string;
   value: number;
-}): Promise<{ ok: true; change_id: string; label: string; value: number; patch_set: number }> {
+}): Promise<{
+  ok: true;
+  change_id: string;
+  label: string;
+  value: number;
+  patch_set: number;
+}> {
   // 标签值范围（Property 13）
   if (!Number.isInteger(args.value) || args.value < -2 || args.value > 2) {
     throw new StructuredError(
@@ -167,7 +116,7 @@ export async function setReviewLabel(args: {
     );
   }
 
-  // 标签名非空 + 不含空格 / `=` 等可能破坏 SSH 参数的字符
+  // 标签名非空 + 不含空格 / `=` 等
   if (typeof args.label !== "string" || args.label.trim().length === 0) {
     throw new StructuredError("internal_error", "标签名不可为空");
   }
@@ -179,15 +128,17 @@ export async function setReviewLabel(args: {
     );
   }
 
-  const patchSet = await resolveCurrentPatchSet(args.change_id);
+  const change = await queryChange(args.change_id);
+  const patchSet = change.current_patch_set;
 
-  await sshGerritPlain([
-    "gerrit",
-    "review",
-    "--label",
-    `${labelTrimmed}=${args.value}`,
-    `${escapeIdentifier(args.change_id)},${patchSet}`,
-  ]);
+  const path = `/changes/${encodeURIComponent(args.change_id)}/revisions/${patchSet}/review`;
+  await gerritPost(path, {
+    tag: "autogenerated:gerrit-mcp-server:set_review_label",
+    notify: "OWNER",
+    labels: {
+      [labelTrimmed]: args.value,
+    },
+  });
 
   return {
     ok: true,

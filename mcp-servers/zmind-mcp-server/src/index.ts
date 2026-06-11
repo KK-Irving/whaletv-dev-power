@@ -2,6 +2,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import * as path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+
+import {
+  AttachmentProcessResult,
+  ensureIssueWorkspace,
+  processAttachment,
+  writeWorkspaceReadme,
+} from "./attachment-handler.js";
+import { describeHttpClientConfig, zmindFetch } from "./http-client.js";
 
 // === 环境变量与常量 ===
 const BASE_URL = process.env.ZMIND_URL || "https://zmind.whaletv.com";
@@ -24,7 +34,7 @@ async function redmineGet(path: string, params?: Record<string, string>): Promis
       url.searchParams.set(k, v);
     }
   }
-  const res = await fetch(url.toString(), {
+  const res = await zmindFetch(url.toString(), {
     headers: { "Content-Type": "application/json" },
   });
   if (!res.ok) {
@@ -38,7 +48,7 @@ async function redminePut(path: string, body: any): Promise<number> {
   validateConfig();
   const url = new URL(path, BASE_URL);
   url.searchParams.set("key", API_KEY);
-  const res = await fetch(url.toString(), {
+  const res = await zmindFetch(url.toString(), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -54,7 +64,7 @@ async function redminePost(path: string, body: any): Promise<any> {
   validateConfig();
   const url = new URL(path, BASE_URL);
   url.searchParams.set("key", API_KEY);
-  const res = await fetch(url.toString(), {
+  const res = await zmindFetch(url.toString(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -145,7 +155,7 @@ function formatIssueList(data: any): string {
 }
 
 // === Server 实例化 ===
-const server = new McpServer({ name: "zmind-mcp-server", version: "1.2.0" });
+const server = new McpServer({ name: "zmind-mcp-server", version: "2.1.1" });
 
 // === 查询工具 ===
 
@@ -531,21 +541,48 @@ const server = new McpServer({ name: "zmind-mcp-server", version: "1.2.0" });
   }
 );
 
-// === 附件工具 ===
+// === 附件工具（v2.0.0 全新工作流）===
 
 (server.tool as any)(
   "download_attachment",
-  "下载 Zmind Issue 的附件内容（支持日志、文本文件等）。对于二进制文件（图片、视频、压缩包）仅返回文件元信息。",
+  "★ 下载 Zmind Issue 的附件。v2.0.0 行为升级：\n" +
+    "- 默认（save_to 不传）：保留 v1.x 行为（文本内联返回，二进制只返元信息）\n" +
+    "- 推荐：传 save_to 让附件落盘到 workspace 内的指定路径，便于后续 read_file / 解压 / 转换\n" +
+    "- 更推荐：直接调 prepare_issue_workspace 一站式处理整个 Issue 的所有附件",
   {
     attachment_url: z.string().describe("附件下载 URL（从 get_issue 返回的 attachments 中获取 content_url）"),
     filename: z.string().optional().describe("附件文件名（用于判断文件类型）"),
+    save_to: z.string().optional().describe("可选；落盘到指定绝对路径。若指定则不内联返回内容"),
   },
-  async ({ attachment_url, filename }: { attachment_url: string; filename?: string }) => {
+  async ({ attachment_url, filename, save_to }: { attachment_url: string; filename?: string; save_to?: string }) => {
     try {
       validateConfig();
 
-      // 判断文件类型
       const name = filename || attachment_url.split("/").pop() || "unknown";
+
+      // 构建带认证的 URL
+      const url = new URL(attachment_url);
+      url.searchParams.set("key", API_KEY);
+
+      const res = await zmindFetch(url.toString());
+      if (!res.ok) {
+        throw new Error(`下载附件失败 (HTTP ${res.status}): ${name}`);
+      }
+
+      // save_to 模式：直接落盘，不内联
+      if (save_to) {
+        await mkdir(path.dirname(save_to), { recursive: true });
+        const buf = Buffer.from(await res.arrayBuffer());
+        await writeFile(save_to, buf);
+        return {
+          content: [{
+            type: "text",
+            text: `✅ 附件已落盘\n- 文件: ${name}\n- 路径: ${save_to}\n- 大小: ${(buf.length / 1024).toFixed(1)} KB\n\nAI 可用 read_file 工具读取该路径，或调 prepare_issue_workspace 做完整路由处理。`,
+          }],
+        };
+      }
+
+      // 旧行为：基于扩展名的简单判定 + 内联返回
       const ext = name.split(".").pop()?.toLowerCase() || "";
       const textExtensions = ["log", "txt", "xml", "json", "csv", "conf", "cfg", "prop", "properties", "ini", "sh", "py", "java", "kt", "c", "h", "cpp", "md"];
       const compressedExtensions = ["gz", "zip", "tar", "bz2", "7z", "rar"];
@@ -555,30 +592,19 @@ const server = new McpServer({ name: "zmind-mcp-server", version: "1.2.0" });
       const isCompressed = compressedExtensions.includes(ext);
       const isBinary = binaryExtensions.includes(ext);
 
-      // 构建带认证的 URL
-      const url = new URL(attachment_url);
-      url.searchParams.set("key", API_KEY);
-
-      const res = await fetch(url.toString());
-      if (!res.ok) {
-        throw new Error(`下载附件失败 (HTTP ${res.status}): ${name}`);
-      }
-
       if (isText) {
-        // 文本文件：直接返回内容
         const content = await res.text();
         const truncated = content.length > 100000
           ? content.substring(0, 100000) + "\n\n... [文件过大，已截断，共 " + content.length + " 字符]"
           : content;
         return { content: [{ type: "text", text: `📄 ${name}\n\n${truncated}` }] };
       } else if (isCompressed || isBinary) {
-        // 二进制/压缩文件：返回元信息
         const size = res.headers.get("content-length") || "未知";
         const sizeKB = size !== "未知" ? `${(parseInt(size) / 1024).toFixed(1)} KB` : "未知";
-        let typeLabel = isBinary ? "二进制文件" : "压缩包";
-        let hint = isBinary
-          ? "此文件为二进制格式，无法直接读取内容。如需查看，请用户手动下载。"
-          : "此文件为压缩包，无法直接读取内容。建议用户手动下载解压后提供日志文件。";
+        const typeLabel = isBinary ? "二进制文件" : "压缩包";
+        const hint = isBinary
+          ? "此文件为二进制格式，无法直接读取内容。建议传 save_to 参数让附件落盘，或调 prepare_issue_workspace 自动处理。"
+          : "此文件为压缩包。建议传 save_to 参数让附件落盘 + 用 prepare_issue_workspace 自动解压。";
 
         return {
           content: [{
@@ -587,7 +613,6 @@ const server = new McpServer({ name: "zmind-mcp-server", version: "1.2.0" });
           }],
         };
       } else {
-        // 未知类型：尝试作为文本读取
         const content = await res.text();
         if (content.length > 0 && !content.includes("\x00")) {
           const truncated = content.length > 100000
@@ -598,7 +623,7 @@ const server = new McpServer({ name: "zmind-mcp-server", version: "1.2.0" });
           return {
             content: [{
               type: "text",
-              text: `📦 ${name}\n- 类型: 未知二进制文件\n- 下载链接: ${attachment_url}\n\n无法读取内容，请用户手动下载查看。`,
+              text: `📦 ${name}\n- 类型: 未知二进制文件\n- 下载链接: ${attachment_url}\n\n建议传 save_to 参数让附件落盘。`,
             }],
           };
         }
@@ -609,10 +634,184 @@ const server = new McpServer({ name: "zmind-mcp-server", version: "1.2.0" });
   }
 );
 
+// =============================================================================
+// prepare_issue_workspace（v2.0.0 ★ 核心新工具）
+// =============================================================================
+(server.tool as any)(
+  "prepare_issue_workspace",
+  "★★ **一站式准备 Issue 工作目录** ★★\n" +
+    "\n" +
+    "在 workspace 根下创建 `.workspace/issue-<id>/` 目录，自动下载并处理所有附件：\n" +
+    "  - 文本（log/txt/xml/json/conf 等）→ 落盘 + 内联返回内容\n" +
+    "  - 图片（png/jpg 等）→ 落盘，AI 可用 read_file + vision 读\n" +
+    "  - zip / tar.gz / tgz → 落盘 + 自动解压\n" +
+    "  - 7z / rar → 落盘 + 检测本机 7z 命令\n" +
+    "  - HCI / btsnoop log → 落盘 + 检测本机 tshark\n" +
+    "  - PDF → 落盘 + 检测本机 pdftotext\n" +
+    "  - 视频 → 落盘 + 提示用户描述关键帧\n" +
+    "  - 其他 → 落盘 + 元信息\n" +
+    "\n" +
+    "目录结构：\n" +
+    "  .workspace/issue-<id>/\n" +
+    "  ├── README.md         AI 自动生成的 Issue 摘要 + 文件索引\n" +
+    "  ├── attachments/      原始附件\n" +
+    "  ├── extracted/        解压后的内容\n" +
+    "  ├── analysis.md       AI 分析报告（待生成）\n" +
+    "  └── notes.md          沟通笔记（待生成）\n" +
+    "\n" +
+    "建议在 .gitignore 加入 .workspace/ 排除项。\n" +
+    "\n" +
+    "返回结构化的处理结果数组，AI 可据此决定后续动作（read_file / 进一步分析）。",
+  {
+    issue_id: z.number().int().positive().describe("Zmind Issue ID"),
+    workspace_root: z
+      .string()
+      .min(1)
+      .describe("Workspace 根目录绝对路径（如 ~/cvte_code/amlogic 或 W:\\code\\950_stm\\amlogic）"),
+    only_filenames: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "可选；仅处理指定文件名的附件（用于已部分处理过的 Issue 增量补充）",
+      ),
+    skip_video: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("是否跳过视频附件（默认 true，避免下载大文件）"),
+  },
+  async (args: {
+    issue_id: number;
+    workspace_root: string;
+    only_filenames?: string[];
+    skip_video?: boolean;
+  }) => {
+    try {
+      validateConfig();
+
+      // 1. 拉取 Issue 详情
+      const data = await redmineGet(`/issues/${args.issue_id}.json`, {
+        include: "journals,attachments",
+      });
+      const issue = data.issue;
+      if (!issue) {
+        throw new Error(`Issue #${args.issue_id} 不存在或不可访问`);
+      }
+
+      // 2. 创建工作目录
+      const dirs = await ensureIssueWorkspace(args.workspace_root, args.issue_id);
+
+      // 3. 处理附件
+      const attachments: any[] = issue.attachments ?? [];
+      const filtered = attachments.filter((a) => {
+        if (args.only_filenames && args.only_filenames.length > 0) {
+          return args.only_filenames.includes(a.filename);
+        }
+        if (args.skip_video !== false) {
+          const lower = a.filename.toLowerCase();
+          if (/\.(mp4|avi|mov|mkv|webm|flv)$/.test(lower)) return false;
+        }
+        return true;
+      });
+
+      const results: AttachmentProcessResult[] = [];
+      const errors: Array<{ filename: string; error: string }> = [];
+
+      for (const att of filtered) {
+        try {
+          const result = await processAttachment({
+            attachment_url: att.content_url,
+            filename: att.filename,
+            api_key: API_KEY,
+            attachments_dir: dirs.attachments,
+            extracted_dir: dirs.extracted,
+          });
+          results.push(result);
+        } catch (e) {
+          errors.push({
+            filename: att.filename,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+
+      // 4. 写 README.md
+      const readmePath = await writeWorkspaceReadme(
+        dirs.root,
+        {
+          id: issue.id,
+          subject: issue.subject,
+          description: issue.description,
+          project_name: issue.project?.name,
+          status: issue.status?.name,
+          target_version: issue.fixed_version?.name,
+        },
+        results,
+      );
+
+      // 5. 组装人类可读 + 结构化输出
+      const summary = {
+        issue_id: args.issue_id,
+        workspace: dirs.root,
+        readme: readmePath,
+        attachments_processed: results.length,
+        attachments_skipped: attachments.length - filtered.length,
+        attachments_errored: errors.length,
+        attachments: results.map((r) => ({
+          filename: r.meta.filename,
+          kind: r.meta.kind,
+          size: r.meta.size,
+          saved_path: r.meta.saved_path,
+          extracted_dir: r.extracted?.extract_dir,
+          extracted_files: r.extracted?.file_count,
+          has_text_content: !!r.text_content,
+          external_tool: r.external_tool_available,
+          hint: r.hint,
+        })),
+        errors,
+      };
+
+      // 人类可读 + JSON
+      let humanText = `🎉 Issue #${args.issue_id} 工作目录已就绪\n\n`;
+      humanText += `📁 ${dirs.root}\n`;
+      humanText += `📄 README.md: ${readmePath}\n\n`;
+      humanText += `处理了 ${results.length} 个附件`;
+      if (errors.length > 0) humanText += `（${errors.length} 个失败）`;
+      humanText += `:\n\n`;
+      for (const r of results) {
+        humanText += `  • [${r.meta.kind}] ${r.meta.filename} → ${r.meta.saved_path}\n`;
+        if (r.extracted) {
+          humanText += `    解压到 ${r.extracted.extract_dir}（${r.extracted.file_count} 个文件）\n`;
+        }
+        humanText += `    💡 ${r.hint}\n\n`;
+      }
+      if (errors.length > 0) {
+        humanText += `\n失败的附件:\n`;
+        for (const e of errors) {
+          humanText += `  ❌ ${e.filename}: ${e.error}\n`;
+        }
+      }
+      humanText += `\n---\n结构化数据:\n${JSON.stringify(summary, null, 2)}`;
+
+      return { content: [{ type: "text", text: humanText }] };
+    } catch (err: any) {
+      return {
+        content: [
+          { type: "text", text: `prepare_issue_workspace 失败: ${err.message}` },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
 // === 启动 ===
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  console.error(
+    `[zmind-mcp-server v2.1.1] started — RAR5 ready, WAF retry on (${describeHttpClientConfig()})`,
+  );
 }
 
 main().catch(console.error);

@@ -1,35 +1,41 @@
 /**
- * get_unresolved_threads 工具：返回当前 change 上**未解决的 thread**（不是单条评论）。
+ * get_unresolved_threads 工具：返回当前 change 上**未解决的 thread**（REST 通道，v1.0.0）。
  *
- * 使用场景：
- *   AI 处理 PR/CR 评论时调用本工具拿到 unresolved thread 列表 → 针对每个 thread 生成回复 →
- *   用 thread.root_uuid 喂给 submit_review_reply 的 in_reply_to → 触发 thread 真正闭环。
+ * 自 v1.0.0 起，本工具改走 REST API，不再需要 NoteDb meta ref + git fetch 的黑魔法：
+ *   - GET /changes/{id}/comments 直接返回每条评论的 id / in_reply_to / unresolved
+ *   - 用这些字段就能在内存里重建 thread 视图
+ *   - 比 SSH NoteDb 方案少一次网络往返，且无需临时 git working dir
  *
- * 与 get_change_comments 的差异：
- *   - get_change_comments：走 SSH `gerrit query --comments`，快速展示，不含 uuid / unresolved
- *   - get_unresolved_threads：走 SSH git fetch NoteDb meta ref，慢但含完整 thread 视图
- *
- * 实现概要：
- *   1. 通过 queryChange 拿到 project name + currentPatchSet.revision
- *   2. fetchAndParseNoteDb 拉 meta ref 并解析全部评论
- *   3. buildThreads 重建 thread 视图
- *   4. 过滤出 is_unresolved === true 的 thread，组装成对外友好的格式
- *
- * 不做的事：
- *   - 不写 NoteDb（写入只能走 gerrit review --json）
- *   - 不缓存（每次调用都 fresh fetch；Gerrit 那边状态可能在调用间发生变化）
- *   - 不返回 resolved thread（避免噪声；如要全量 thread 视图可后续加参数）
+ * 输出格式与 v0.x 保持完全兼容（root_uuid / chain / latest 字段名不变），
+ * 上层 code-review-handling steering 调用方式无需修改。
  */
 
-import { sshGerritJson } from "../ssh-client.js";
+import { gerritGet } from "../http-client.js";
 import { StructuredError } from "../errors.js";
-import { fetchAndParseNoteDb, buildThreads } from "../note-db.js";
+import { queryChange } from "./query.js";
 
 // =============================================================================
-// 出参类型（暴露给 MCP 客户端）
+// REST API 响应类型
 // =============================================================================
 
-/** 单条评论的对外视图（不暴露 NoteDb 内部 server-only 字段如 serverId） */
+interface CommentInfo {
+  id: string;
+  author?: { _account_id?: number; name?: string; email?: string };
+  /** ISO 8601 时间字符串 */
+  updated: string;
+  message: string;
+  unresolved?: boolean;
+  in_reply_to?: string;
+  line?: number;
+  patch_set?: number;
+  side?: number;
+  tag?: string;
+}
+
+// =============================================================================
+// 出参类型（暴露给 MCP 客户端，与 v0.x 保持兼容）
+// =============================================================================
+
 export interface ThreadCommentView {
   uuid: string;
   author_id: number;
@@ -38,151 +44,164 @@ export interface ThreadCommentView {
   written_on: string;
   message: string;
   unresolved: boolean;
-  /** 父评论 uuid（root 评论无此字段） */
   parent_uuid?: string;
 }
 
-/** 单个未解决 thread 的对外视图 */
 export interface UnresolvedThreadView {
   /** 直接用作 in_reply_to 喂给 submit_review_reply */
   root_uuid: string;
   file: string;
   /** patchset-level 评论这里返回 0；具体文件评论是行号 */
   line: number;
-  /** root 评论的作者 account_id（gerrit-ai 是 1000192） */
   root_author_id: number;
-  /** root 评论文本，AI 据此生成回复 */
   root_message: string;
-  /** root 评论时间 */
   root_written_on: string;
-  /** thread 完整链（按时间升序）；通常只有 1 条（gerrit-ai 原评论） */
+  /** thread 完整链（按时间升序） */
   chain: ThreadCommentView[];
-  /** 链的最末一条（决定 thread 状态）；冗余但便于 AI 直接读 */
+  /** 链的最末一条 */
   latest: ThreadCommentView;
 }
 
 export interface GetUnresolvedThreadsResult {
   change_id: string;
-  /** Gerrit project 名（用作下次 submit_review_reply 时的上下文） */
   project: string;
-  /** 当前 patch set 编号 */
   current_patch_set: number;
-  /** 当前 patch set 的 commit SHA-1 */
   current_revision: string;
-  /** 该 patch set 上的全部 thread 数（含已解决） */
   total_threads: number;
-  /** 未解决 thread 数 */
   unresolved_thread_count: number;
-  /** 未解决 thread 列表 */
   unresolved_threads: UnresolvedThreadView[];
 }
 
 // =============================================================================
-// SSH query change 拿 project + revision
+// Thread 重建
 // =============================================================================
 
-interface MinimalChangeInfo {
-  project?: string;
-  number?: number;
-  currentPatchSet?: { number?: number; revision?: string };
+interface ThreadInternal {
+  root: { file: string; comment: CommentInfo };
+  chain: Array<{ file: string; comment: CommentInfo }>;
+  is_unresolved: boolean;
+  latest: CommentInfo;
 }
 
-async function fetchProjectAndRevision(changeId: string): Promise<{
-  project: string;
-  changeNumber: number;
-  patchSet: number;
-  revision: string;
-}> {
-  const trimmed = changeId.trim();
-  if (trimmed.length === 0) {
-    throw new StructuredError("internal_error", "change_id 不可为空");
+/**
+ * 把扁平评论按 in_reply_to 重建成 thread 视图。
+ *
+ * 规则：
+ *   1. 没有 in_reply_to 或指向不存在 id 的评论 → root
+ *   2. 沿 child index 收集所有后代
+ *   3. 按 updated 升序排序
+ *   4. is_unresolved = chain[最后一条].unresolved
+ */
+function buildThreads(
+  groupedByFile: Record<string, CommentInfo[]>,
+): ThreadInternal[] {
+  // 全部 comment + 来源 file
+  const allWithFile: Array<{ file: string; comment: CommentInfo }> = [];
+  for (const [file, comments] of Object.entries(groupedByFile)) {
+    for (const c of comments) {
+      allWithFile.push({ file, comment: c });
+    }
   }
-  if (/[\s`"'\\]/.test(trimmed)) {
-    throw new StructuredError(
-      "internal_error",
-      `change_id 包含非法字符: ${trimmed}`,
-    );
+  if (allWithFile.length === 0) return [];
+
+  const byId = new Map<string, { file: string; comment: CommentInfo }>();
+  for (const item of allWithFile) {
+    byId.set(item.comment.id, item);
   }
 
-  const { rows } = await sshGerritJson<MinimalChangeInfo>([
-    "gerrit",
-    "query",
-    "--format=JSON",
-    "--current-patch-set",
-    `change:${trimmed}`,
-  ]);
-  if (rows.length === 0) {
-    throw new StructuredError(
-      "not_found",
-      `Change 不存在或不可见: change_id=${changeId}`,
-      404,
-    );
+  // 子节点索引
+  const childrenByParent = new Map<
+    string,
+    Array<{ file: string; comment: CommentInfo }>
+  >();
+  for (const item of allWithFile) {
+    const parentId = item.comment.in_reply_to;
+    if (parentId && byId.has(parentId)) {
+      const list = childrenByParent.get(parentId) ?? [];
+      list.push(item);
+      childrenByParent.set(parentId, list);
+    }
   }
-  const c = rows[0];
-  if (
-    typeof c.project !== "string" ||
-    c.project.length === 0 ||
-    typeof c.number !== "number" ||
-    typeof c.currentPatchSet?.number !== "number" ||
-    typeof c.currentPatchSet?.revision !== "string"
-  ) {
-    throw new StructuredError(
-      "internal_error",
-      `gerrit query 返回缺少必要字段（project / number / currentPatchSet）: change_id=${changeId}`,
-      undefined,
-      { received: c },
-    );
+
+  // 找 root：无 in_reply_to 或 parent 不存在
+  const roots = allWithFile.filter(
+    (item) =>
+      !item.comment.in_reply_to || !byId.has(item.comment.in_reply_to),
+  );
+
+  const threads: ThreadInternal[] = [];
+  for (const root of roots) {
+    const chain: Array<{ file: string; comment: CommentInfo }> = [];
+    const visited = new Set<string>();
+    const stack: Array<{ file: string; comment: CommentInfo }> = [root];
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      if (visited.has(cur.comment.id)) continue;
+      visited.add(cur.comment.id);
+      chain.push(cur);
+      const kids = childrenByParent.get(cur.comment.id) ?? [];
+      stack.push(...kids);
+    }
+    chain.sort((a, b) => {
+      if (a.comment.updated < b.comment.updated) return -1;
+      if (a.comment.updated > b.comment.updated) return 1;
+      return a.comment.id < b.comment.id
+        ? -1
+        : a.comment.id > b.comment.id
+          ? 1
+          : 0;
+    });
+    const latest = chain[chain.length - 1].comment;
+    threads.push({
+      root,
+      chain,
+      latest,
+      is_unresolved: latest.unresolved === true,
+    });
   }
-  return {
-    project: c.project,
-    changeNumber: c.number,
-    patchSet: c.currentPatchSet.number,
-    revision: c.currentPatchSet.revision,
-  };
+  return threads;
 }
 
 // =============================================================================
-// 主入口：getUnresolvedThreads
+// 主入口
 // =============================================================================
 
 /**
  * 获取一个 Change 当前 patch set 上的所有未解决 thread。
  *
- * @param args.change_id           Change-Id 字符串（如 "Ixxx..."）或 Change Number（如 "114401"）
- * @param args.include_resolved    可选；默认 false（只返回未解决）；true 时返回所有 thread
- * @param args.author_id_filter    可选；只保留指定 author_id 的 root 评论的 thread（如 1000192 = gerrit-ai）
+ * @param args.change_id           Change-Id 或 Change Number
+ * @param args.include_resolved    可选；默认 false（只返回未解决）
+ * @param args.author_id_filter    可选；只保留指定 author_id 的 root 评论的 thread（gerrit-ai = 1000192）
  *
- * @returns GetUnresolvedThreadsResult，包含 unresolved_threads 列表
- *
- * @throws StructuredError("not_found")  Change 不存在 / meta ref 为空
- * @throws StructuredError(...)          SSH 错误透传
+ * @throws StructuredError("not_found")  Change 不存在
  */
 export async function getUnresolvedThreads(args: {
   change_id: string;
   include_resolved?: boolean;
   author_id_filter?: number;
 }): Promise<GetUnresolvedThreadsResult> {
-  const { project, changeNumber, patchSet, revision } =
-    await fetchProjectAndRevision(args.change_id);
+  // 先拿 change 元信息（project / current_revision / current_patch_set）
+  const change = await queryChange(args.change_id);
+  if (!change.current_revision) {
+    throw new StructuredError(
+      "internal_error",
+      `Change ${args.change_id} 缺少 current_revision`,
+    );
+  }
 
-  // Fetch + parse NoteDb meta ref
-  const records = await fetchAndParseNoteDb({
-    changeNumber,
-    patchSetCommitSha: revision,
-    projectName: project,
-  });
+  // GET /changes/{id}/comments → 全部评论分组在 file 下
+  const path = `/changes/${encodeURIComponent(args.change_id)}/comments`;
+  const grouped = await gerritGet<Record<string, CommentInfo[]>>(path);
 
-  // 重建 thread 视图
-  const threads = buildThreads(records);
+  const threads = buildThreads(grouped);
   const totalThreads = threads.length;
 
-  // 过滤
   const includeResolved = args.include_resolved === true;
   const filtered = threads.filter((t) => {
     if (!includeResolved && !t.is_unresolved) return false;
     if (
       typeof args.author_id_filter === "number" &&
-      t.root.author?.id !== args.author_id_filter
+      t.root.comment.author?._account_id !== args.author_id_filter
     ) {
       return false;
     }
@@ -190,21 +209,21 @@ export async function getUnresolvedThreads(args: {
   });
 
   const unresolvedThreads: UnresolvedThreadView[] = filtered.map((t) => {
-    const chain: ThreadCommentView[] = t.chain.map((c) => ({
-      uuid: c.key.uuid,
-      author_id: c.author?.id ?? 0,
-      written_on: c.writtenOn,
-      message: c.message,
-      unresolved: c.unresolved === true,
-      parent_uuid: c.parentUuid,
+    const chain: ThreadCommentView[] = t.chain.map((item) => ({
+      uuid: item.comment.id,
+      author_id: item.comment.author?._account_id ?? 0,
+      written_on: item.comment.updated,
+      message: item.comment.message,
+      unresolved: item.comment.unresolved === true,
+      parent_uuid: item.comment.in_reply_to,
     }));
     return {
-      root_uuid: t.root.key.uuid,
-      file: t.root.key.filename,
-      line: typeof t.root.lineNbr === "number" ? t.root.lineNbr : 0,
-      root_author_id: t.root.author?.id ?? 0,
-      root_message: t.root.message,
-      root_written_on: t.root.writtenOn,
+      root_uuid: t.root.comment.id,
+      file: t.root.file,
+      line: typeof t.root.comment.line === "number" ? t.root.comment.line : 0,
+      root_author_id: t.root.comment.author?._account_id ?? 0,
+      root_message: t.root.comment.message,
+      root_written_on: t.root.comment.updated,
       chain,
       latest: chain[chain.length - 1],
     };
@@ -212,12 +231,12 @@ export async function getUnresolvedThreads(args: {
 
   return {
     change_id: args.change_id,
-    project,
-    current_patch_set: patchSet,
-    current_revision: revision,
+    project: change.project,
+    current_patch_set: change.current_patch_set,
+    current_revision: change.current_revision,
     total_threads: totalThreads,
-    unresolved_thread_count: unresolvedThreads.filter((t) =>
-      t.latest.unresolved === true,
+    unresolved_thread_count: unresolvedThreads.filter(
+      (t) => t.latest.unresolved === true,
     ).length,
     unresolved_threads: unresolvedThreads,
   };

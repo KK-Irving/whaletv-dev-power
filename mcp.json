@@ -4,8 +4,10 @@
       "command": "npx",
       "args": ["-y", "@kk-irving/zmind-mcp-server@latest"],
       "env": {
+        "ZMIND_URL": "https://zmind.whaletv.com",
         "ZMIND_API_KEY": "",
-        "ZMIND_URL": "https://zmind.whaletv.com"
+        "ZMIND_HTTP_MIN_INTERVAL": "0",
+        "ZMIND_FETCH_CONCURRENCY": "2"
       },
       "disabled": false,
       "autoApprove": []
@@ -27,9 +29,41 @@
       "args": ["-y", "@kk-irving/gerrit-mcp-server@latest"],
       "env": {
         "GERRIT_URL": "https://whale-gerrit.zeasn.com",
+        "GERRIT_AUTH_HEADER": "",
+        "GERRIT_COOKIE": "",
         "GERRIT_USERNAME": "",
         "GERRIT_HTTP_PASSWORD": "",
         "GERRIT_TIMEOUT_MS": "30000"
+      },
+      "disabled": false,
+      "autoApprove": []
+    },
+    "confluence-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@kk-irving/confluence-mcp-server@latest"],
+      "env": {
+        "CONFLUENCE_BASE_URL": "https://docs.whaletv.com",
+        "CONFLUENCE_COOKIE": "",
+        "CONFLUENCE_TIMEOUT_MS": "30000",
+        "CONFLUENCE_REQUEST_DELAY_MS": "150"
+      },
+      "disabled": false,
+      "autoApprove": []
+    },
+    "knowledge-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@kk-irving/knowledge-mcp-server@latest"],
+      "env": {
+        "KNOWLEDGE_DB_PATH": "",
+        "KNOWLEDGE_MODEL_CACHE_DIR": "",
+        "KNOWLEDGE_EMBEDDING_THREADS": "",
+        "ZMIND_URL": "https://zmind.whaletv.com",
+        "ZMIND_API_KEY": "",
+        "GERRIT_URL": "https://whale-gerrit.zeasn.com",
+        "GERRIT_AUTH_HEADER": "",
+        "GERRIT_COOKIE": "",
+        "CONFLUENCE_BASE_URL": "https://docs.whaletv.com",
+        "CONFLUENCE_COOKIE": ""
       },
       "disabled": false,
       "autoApprove": []

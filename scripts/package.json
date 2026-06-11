@@ -1,0 +1,14 @@
+{
+  "name": "whaletv-dev-power-scripts",
+  "version": "1.0.0",
+  "description": "Operational scripts for whaletv-dev-power (credential refresh, setup helpers).",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "refresh-auth": "node refresh-auth.mjs",
+    "postinstall": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0"
+  }
+}

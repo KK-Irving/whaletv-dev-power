@@ -87,65 +87,39 @@ IF 用户拒绝 → 终止流程，不执行任何 CP 操作
 
 ---
 
-### ⑤ 触发 Cherry-Pick（manual_required 引导）
+### ⑤ 触发 Cherry-Pick（v1.0.0 自动执行）
 
-> ⚠️ **本步骤已不再自动批量执行 CP**。
-> 因 Gerrit SSH 命令集没有 cherry-pick 子命令、且目标环境的 nginx 双层认证使 REST 不可用，
-> 加之 cherry-pick 是高风险操作（误推到错分支极易污染 MP 分支线），
-> 工具固定返回 `status="manual_required"` + Web UI 链接，由 **Developer 在 Gerrit Web UI 手动完成**。
+> ✨ **v1.0.0 升级**：cherry-pick 改走 REST API 自动执行，**不再需要 Developer 在 Web UI 手动操作**。
+> Gerrit 服务端实现保留 `cherryPickOfChange` 元数据，追溯链路完整，比客户端 git fetch+cherry-pick+push 方案更安全。
 
 **AI 动作**：
 
-1. 按 CP 计划表格**逐项**调用 Gerrit MCP Server 的 `cherry_pick_change` 工具，工具返回：
-   ```json
-   {
-     "status": "manual_required",
-     "web_url": "https://whale-gerrit.zeasn.com/q/<change_id>",
-     "destination_branch": "<目标分支>",
-     "change_id": "<源 Change>",
-     "reason": "Gerrit SSH 通道不支持 cherry-pick 操作 ...",
-     "instructions": [
-       "1. 打开 Change 页面: <web_url>",
-       "2. 点击页面右上角菜单 (⋮) → 'Cherry pick'",
-       "3. 在弹出对话框的 'Branch' 字段输入: <目标分支>",
-       "4. 保留默认 commit message，或编辑后再提交",
-       "5. 点击 'CHERRY PICK' 按钮完成",
-       "6. 完成后请告诉 AI 操作结果"
-     ]
-   }
+1. 按 CP 计划表格**逐项**调用 Gerrit MCP Server 的 `cherry_pick_change` 工具，工具自动执行并返回三态：
+   - `{ status: "success", change_id, change_number, web_url }` — 成功创建新 Change
+   - `{ status: "skipped_already_merged", reason }` — 目标分支已包含等效提交
+   - `{ status: "conflict", conflicting_files: [...], reason }` — 自动合并冲突，需要人工 resolve
+
+2. AI 实时汇报每条结果：
+   ```
+   ✅ I1234567 → os10_mp: 新 Change https://gerrit.xxx/c/12345
+   ✅ I1234567 → os10_3_mp: 新 Change https://gerrit.xxx/c/12346
+   ⏭️ I7654321 → os10_mp: 跳过（已合并）
+   ❌ I2345678 → os10_mp: 冲突（src/Foo.java, src/Bar.java）— 请手动 cherry-pick 并 resolve
    ```
 
-2. AI 把每条 `manual_required` 的引导集中展示给 Developer，列表形式：
-   ```
-   📋 共 N 条 Cherry-Pick 需要 Developer 手动完成（Gerrit Web UI）：
-   
-   1. I1234567 → os10_mp:
-      🔗 https://whale-gerrit.zeasn.com/q/I1234567
-   
-   2. I7654321 → os10_3_mp:
-      🔗 https://whale-gerrit.zeasn.com/q/I7654321
-   
-   操作步骤（每条相同）：
-      ① 打开链接 → ⋮ → "Cherry pick"
-      ② Branch 字段填入对应目标分支
-      ③ 点击 "CHERRY PICK" 按钮
-   
-   完成后请告诉我每条的结果（success / conflict / 已存在），我会继续后续工作流。
-   ```
-
-3. **等待** Developer 逐条回报结果，按以下三态收集：
-   - `success` — Web UI 创建了新 Change，让 Developer 提供新 Change URL（用于 Zmind 评论）
-   - `conflict` — Web UI 报告冲突，标记为待人工 resolve
-   - `already_exists` / `skipped` — 目标分支已包含等效提交
+3. 对 conflict 的 Change：
+   - 展示冲突文件列表给 Developer
+   - 询问是否需要 AI 协助本地手动 cherry-pick + resolve
+   - 不强制完成，可跳过等 Developer 单独处理
 
 **关键约束**：
-- ❌ **不要**通过本地 `git fetch + cherry-pick + push` 自动化 CP（会丢失 `cherryPickOfChange` 元数据，破坏 Gerrit 的 cherry-pick 链路追溯）
-- ❌ **不要**跳过 Developer 手动确认就假装 CP 完成（误操作风险高）
-- ✅ AI 的角色是**引导**而非**执行**：把 Web URL + 步骤清晰列出，等 Developer 回报
+- ✅ AI 在 CP 计划已经 Developer 确认（步骤 👤）后才进入本步骤
+- ✅ 每条 CP 实时汇报，便于 Developer 看到失败立即停下
+- ❌ 不要在 conflict 时盲目继续后续 CP（应停下询问）
 
-**预期输出**：所有 CP 已被 Developer 在 Web UI 完成；AI 收集到每条结果（success / conflict / skipped）
+**预期输出**：批量 CP 执行完毕；每条 success / skipped / conflict 结果汇总到步骤 ⑥
 
-**错误处理**：IF Developer 报告 conflict，THEN 询问是否需要 AI 协助本地手动 resolve（仍由 Developer 主导）；IF Developer 报告"目标分支不存在"，THEN 检查 list_branches 输出是否包含该分支
+**错误处理**：IF Gerrit API 整体不可达 THEN 中断后续 CP，汇报已完成与未完成的项目；IF 某条 CP 报 401/403 THEN 提示 Developer 检查权限
 
 ---
 

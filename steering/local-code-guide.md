@@ -60,15 +60,27 @@ git grep -n "TvScanConfig" -- "vendor/amlogic/common/frameworks/**/*.java"
 
 未命中则降级到下一档。
 
-### ② git grep 精确搜索（~0.4s）
+### ② 本地知识库（毫秒级，v2 起新增）
+
+调 `search_local` 在本地索引（zmind PR / gerrit changes / confluence pages）做 hybrid 检索，找历史相似 PR / 修复 commit / 设计文档：
+
+```jsonc
+search_local({ query: "TvScanConfig 闪退", source: "all", mode: "hybrid", limit: 5 })
+```
+
+如果命中含相关的 gerrit change，从其 `commit_message` / `project` 反推具体改过哪些文件，比 git grep 更聚焦。详见 `steering/knowledge-base-workflow.md`。
+
+> 命中 gerrit `project` 字段可以作为 OpenGrok / git 的搜索范围限定符。
+
+### ③ git grep 精确搜索（~0.4s）
 
 在当前代码库内精确搜索类名、方法名、字符串常量等。既可全仓搜索，也可结合上一档的路径前缀做范围限定。
 
-### ③ 读取已知路径文件（即时）
+### ④ 已知路径直读（最快）
 
 当已知文件路径时，直接读取文件获取完整上下文。
 
-### ④ OpenGrok 远程搜索（最低优先级）
+### ⑤ OpenGrok 远程搜索（最低优先级）
 
 仅在以下情况使用：
 - 本地 git grep 未返回结果
@@ -78,6 +90,8 @@ git grep -n "TvScanConfig" -- "vendor/amlogic/common/frameworks/**/*.java"
 使用 OpenGrok 时，在报告中标注"定位方式：OpenGrok"。
 
 > 💡 module-path-map 的路径前缀同样可以作为 OpenGrok 的 `path:` 限定符，把"全平台搜索"收窄到"指定模块搜索"。
+>
+> 💡 v2 还提供 AOSP 模块级精搜 `search_aosp`（需先 `index_aosp_module` + `embed_aosp_pending`），适合本地有源码 + 想做语义而非关键字搜索的场景。详见 `knowledge-base-workflow.md`。
 
 ## 为什么 git grep 优于 ripgrep
 

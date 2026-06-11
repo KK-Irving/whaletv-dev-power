@@ -59,75 +59,90 @@ inclusion: auto
 
 ### ③ Gerrit 连接验证
 
-**AI 动作**: 分两步验证 Gerrit 连接 —— 先验 SSH（gerrit-mcp-server **主通道**），再验 REST（保留作 fallback）。
+**AI 动作**: 通过 REST API 验证 Gerrit 连接。**v1.1.0 起 gerrit-mcp-server 支持双通道认证**：
 
-**引导提示**:
+| 模式 | 适用场景 | 配置字段 |
+|------|---------|---------|
+| **session 模式（首选）** | nginx + Gerrit 双层认证网关（公司默认部署） | `GERRIT_AUTH_HEADER` + `GERRIT_COOKIE` |
+| **basic 模式（备选）** | Gerrit 直连无 nginx 网关 | `GERRIT_USERNAME` + `GERRIT_HTTP_PASSWORD` |
+
+**推荐：直接跑凭据自动刷新脚本**（详见 [`steering/auth-refresh.md`](./auth-refresh.md)）：
+
+```powershell
+# Windows
+PowerShell -ExecutionPolicy Bypass -File scripts\refresh-auth.ps1
 ```
-接下来配置 Gerrit 连接。
-
-请提供你的 Gerrit 账号信息：
-- 用户名：（登录 https://whale-gerrit.zeasn.com/ 的用户名）
-- HTTP 密码：（Gerrit Settings → HTTP Credentials → Generate Password）
+```bash
+# Linux / macOS
+bash scripts/refresh-auth.sh
 ```
 
-> 说明：自 v0.2.0 起 gerrit-mcp-server 全部 14 个工具走 **SSH 通道（端口 29418）**，原因是部署环境 nginx 在 Gerrit 前置 Basic Auth 与 Gerrit 自身的 HTTP 凭据校验形成双层认证，单次 HTTP 请求无法同时满足，所有走 REST `/a/...` 的客户端都会 401。SSH 公钥用于：① `gerrit query` / `gerrit review --json` / `gerrit set-reviewers` 等所有 SSH 命令；② `push_to_gerrit` 内部的 git push；③ `get_unresolved_threads` 内部的 git fetch NoteDb meta ref。HTTP 密码暂保留（用于 fallback 与未来 nginx 配置修复后切回 REST），但 v0.2.0+ 不再依赖。两类凭据在 onboarding 阶段一次性配好。
+脚本会：
+- 提示输入 SSO 用户名 + 密码（密码不回显、不落盘）
+- 自动跑 Playwright headless 浏览器登录 nginx + Gerrit
+- 抓取 cookie 写入 `mcp.json`，自检通过才算成功
 
-**验证方式 A（必做）**: SSH 验证 — gerrit-mcp-server 主通道：
+> 说明：v1.1.0 双通道认证是为了过公司 nginx + Gerrit 双层（HTTP 协议规定一个请求只能有 1 个 Authorization 头，但允许 1 个 Authorization + 1 个 Cookie 同时存在；脚本利用此设计）。脚本不能跑 / 想手动配置时，参考 `auth-refresh.md` 的 F12 抓取流程。
+
+**手动验证（脚本跑成功后用来确认）**:
+
+```bash
+# Linux / macOS / Git Bash — session 模式
+curl -sS \
+  -H "Authorization: $GERRIT_AUTH_HEADER" \
+  -H "Cookie: $GERRIT_COOKIE" \
+  "https://whale-gerrit.zeasn.com/changes/?n=1"
+```
+
+```powershell
+# PowerShell — session 模式
+$headers = @{
+  Authorization = $env:GERRIT_AUTH_HEADER
+  Cookie        = $env:GERRIT_COOKIE
+}
+Invoke-WebRequest -Uri "https://whale-gerrit.zeasn.com/changes/?n=1" -Headers $headers -UseBasicParsing
+```
+
+```bash
+# basic 模式（无 nginx 时）
+curl -sS -u "<用户名>:<HTTP密码>" "https://whale-gerrit.zeasn.com/a/changes/?n=1"
+```
+
+- IF 返回 JSON（首行 `)]}'` 后跟 changes 数组）→ ✅ 显示 "Gerrit REST 连接正常（gerrit-mcp-server 14 个工具均可用）"
+- IF 401 + realm 含 `Welcomme to ...` → nginx 那一层认证未过，检查 `GERRIT_AUTH_HEADER`（session 模式）或检查 nginx 是否要求其他 header
+- IF 401 + realm 含 `Gerrit Code Review` → Gerrit 自身认证未过，session 模式下检查 cookie 是否过期、basic 模式下检查 HTTP_PASSWORD
+- IF 连接超时或域名解析失败 → 进入"网络诊断步骤"
+
+**SSH 公钥仍然必要**（仅用于 `push_to_gerrit` 内部的 git push）：
 
 ```bash
 ssh -p 29418 <用户名>@whale-gerrit.zeasn.com gerrit version
 ```
 
-- IF 返回 `gerrit version 3.6.0` → 显示 "✅ Gerrit SSH 连接正常（gerrit-mcp-server 14 个工具均可用）"
-- IF 失败 → 进入"网络诊断步骤"
+- IF 返回 `gerrit version 3.6.0` → ✅ "push_to_gerrit 可用"
+- IF 失败 → 引导配置 SSH 公钥（仅影响 push_to_gerrit；其他 13 个 REST 工具不受影响）
 
-**验证方式 B（可选）**: REST 验证 — fallback 通道，nginx 配置修复后才能用：
+**网络诊断步骤**（任一通道失败时执行）：
 
-```bash
-# Linux / macOS / Git Bash
-curl -sS -u "<用户名>:<HTTP密码>" "https://whale-gerrit.zeasn.com/a/accounts/self"
-
-# PowerShell
-$cred = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("<用户名>:<HTTP密码>"))
-Invoke-WebRequest -Uri "https://whale-gerrit.zeasn.com/a/accounts/self" -Headers @{ Authorization = "Basic $cred" } -UseBasicParsing
-```
-
-- IF 返回当前用户的 JSON（前缀 `)]}'` 后跟账户信息）→ 显示 "✅ Gerrit REST 连接正常（fallback 可用）"
-- IF 返回 401 + WWW-Authenticate realm 含 `Welcomme to Gerrit Code Review Site!` → 说明 nginx 双层认证生效，REST 不可用是预期的；**只要 SSH 通即可**，不阻塞 onboarding
-- IF 返回 401 + realm 是 `Gerrit Code Review` → 提示用户检查 HTTP Credentials 是否正确（仅当未来切回 REST 时需要）
-- IF 连接超时或域名解析失败 → 进入"网络诊断步骤"
-
-**网络诊断步骤**（SSH 失败时自动执行）：
 ```bash
 # 1. 检查 DNS 解析
 nslookup whale-gerrit.zeasn.com
 
-# 2. 检查 SSH 端口连通性（主通道）
-nc -zv whale-gerrit.zeasn.com 29418 -w 5
-
-# 3. 检查 HTTPS 端口连通性（仅 fallback 时需要）
+# 2. 检查 HTTPS 端口连通性（REST 主通道）
 nc -zv whale-gerrit.zeasn.com 443 -w 5
+
+# 3. 检查 SSH 端口连通性（仅 push_to_gerrit 需要）
+nc -zv whale-gerrit.zeasn.com 29418 -w 5
 
 # 4. 检查是否需要代理
 echo $http_proxy $https_proxy
 ```
 
 根据诊断结果给出针对性建议：
-- DNS 解析失败 → "请检查 DNS 配置或 /etc/hosts 是否有 whale-gerrit.zeasn.com 的记录"
-- 29418 端口不通 → "SSH 端口 29418 被防火墙拦截，gerrit-mcp-server 全部工具不可用。请联系网络管理员开放，或确认是否需要 SSH 代理"
-- 443 端口不通 → "HTTPS 端口被拦截，REST fallback 不可用；但只要 SSH 通就足够，不影响主流程"
-- DNS 与 29418 都通但 SSH 认证失败 → 引导配置 SSH 密钥：
-  ```
-  ❌ Gerrit SSH 连接失败（gerrit-mcp-server 全部工具不可用）
-  
-  请确保你的 SSH 公钥已上传到 Gerrit：
-  1. 生成 SSH 密钥（如果没有）：ssh-keygen -t rsa -b 4096
-  2. 复制公钥：cat ~/.ssh/id_rsa.pub
-  3. 登录 https://whale-gerrit.zeasn.com/ → Settings → SSH Keys → Add Key
-  4. 粘贴公钥并保存
-  
-  配置完成后请告诉我，我会重新验证。
-  ```
+- DNS 解析失败 → 检查 DNS 配置或 /etc/hosts
+- 443 端口不通 → "HTTPS 端口被拦截，REST 通道不可用，gerrit-mcp-server 全部不可用"
+- 29418 端口不通 → "SSH 端口被拦截，push_to_gerrit 不可用；其他 13 个 REST 工具仍可用"
+- 端口都通但 REST 401 → 跑 `scripts/refresh-auth.*` 重抓凭据
 
 **可选**: 询问默认 Reviewer 列表（后续推送时使用）。
 
@@ -135,55 +150,39 @@ echo $http_proxy $https_proxy
 
 ### ④ 内部文档系统连接验证
 
-**AI 动作**: 获取用户的 Confluence 账号密码，然后通过 REST API 实际验证连通性。
+**AI 动作**: 与 Gerrit 类似，文档中心也走 cookie 认证。**优先用步骤 ③ 同一次跑的 `scripts/refresh-auth.*` 一并完成**——脚本会同时抓 Confluence 的 `JSESSIONID / seraph.confluence` cookie 写入 mcp.json。
 
-**引导提示**:
-```
-接下来配置内部文档系统（Confluence）连接。
+如果脚本已跑过，直接验证：
 
-文档地址: https://docs.whaletv.com/
-请提供你的账号信息：
-- 用户名：（公司账号）
-- 密码：（公司密码）
-```
-
-**验证方式**: 用户提供凭据后，执行 API 验证：
 ```bash
-# PowerShell
-$cred = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("<用户名>:<密码>"))
-$headers = @{ Authorization = "Basic $cred" }
-Invoke-WebRequest -Uri "https://docs.whaletv.com/rest/api/content?limit=1" -Headers $headers -UseBasicParsing
+# 用 mcp.json 里的 CONFLUENCE_COOKIE 验证
+curl -sS \
+  -H "Cookie: $CONFLUENCE_COOKIE" \
+  "https://docs.whaletv.com/rest/api/content?limit=1"
 ```
 
-- IF 返回 JSON 内容 → 显示 "✅ 内部文档系统连接正常"
-- IF 返回 401 → 提示认证失败：
-  ```
-  ❌ 文档系统认证失败（HTTP 401）
-  
-  请确认用户名和密码是否正确（与浏览器登录 docs.whaletv.com 时相同）。
-  注意：用户名可能区分大小写。
-  
-  请重新提供，或输入"跳过"暂时跳过此步骤。
-  ```
-
-- IF 连接超时或无法访问 → 执行网络诊断：
-  ```bash
-  # 检查 DNS 解析
-  nslookup docs.whaletv.com
-  
-  # 检查 HTTPS 端口连通性
-  nc -zv docs.whaletv.com 443 -w 5
-  
-  # 检查代理配置
-  echo $http_proxy $https_proxy
-  ```
-  
-  根据诊断结果给出建议：
-  - DNS 不通 → "请检查 DNS 配置，或在 /etc/hosts 中添加 docs.whaletv.com 的 IP 映射"
-  - 端口不通 → "HTTPS 端口被拦截，请确认是否需要配置代理。如果浏览器能访问但终端不行，可能需要设置 http_proxy 环境变量"
-  - 端口通但请求失败 → "可能是 SSL 证书问题或代理拦截，请尝试：`curl -k https://docs.whaletv.com`"
-
+- IF 返回 JSON 内容 → ✅ "内部文档系统连接正常"
+- IF 返回 401 / 重定向到登录页 → cookie 过期或脚本没抓到，重跑 `scripts/refresh-auth.*`
 - IF 用户选择跳过 → 标注 "⚠️ 内部文档暂未配置，后续分析问题时将跳过文档查询"
+
+**手动方式**（不想用脚本）：浏览器登录后 F12 → Network → 任一 `/rest/api/...` 请求 → Headers → 复制 `Cookie:` 后整串 → 填到 `mcp.json` 的 `mcpServers.confluence-mcp-server.env.CONFLUENCE_COOKIE`。
+
+**网络诊断步骤**（连接失败时执行）：
+```bash
+# 检查 DNS 解析
+nslookup docs.whaletv.com
+
+# 检查 HTTPS 端口连通性
+nc -zv docs.whaletv.com 443 -w 5
+
+# 检查代理配置
+echo $http_proxy $https_proxy
+```
+
+根据诊断结果给出建议：
+- DNS 不通 → "请检查 DNS 配置，或在 /etc/hosts 中添加 docs.whaletv.com 的 IP 映射"
+- 端口不通 → "HTTPS 端口被拦截，请确认是否需要配置代理"
+- 端口通但请求失败 → 跑 `scripts/refresh-auth.*` 重抓 cookie
 
 ---
 
@@ -267,11 +266,15 @@ curl -s -u "<用户名>:<密码>" "https://opengrok.zeasn.com/api/v1/search?full
 
 ## 凭据存储说明
 
-各系统凭据的存储位置：
-- **Zmind API Key**: mcp.json 的 `env.ZMIND_API_KEY` 字段
-- **OpenGrok 用户名/密码**: mcp.json 的 `env.OPENGROK_USERNAME` 和 `env.OPENGROK_PASSWORD` 字段
-- **Gerrit 用户名**: 记录在 skill 上下文中，SSH 密钥由系统管理
-- **Confluence 用户名/密码**: 记录在 skill 上下文中，每次 API 调用时使用
+各系统凭据的存储位置（统一在 `~/.kiro/settings/mcp.json` 的 `mcpServers.<server>.env`）：
+- **Zmind API Key**: `mcpServers.zmind-mcp-server.env.ZMIND_API_KEY`
+- **Gerrit (session 模式)**: `mcpServers.gerrit-mcp-server.env.GERRIT_AUTH_HEADER` + `GERRIT_COOKIE`（首选，过 nginx 双层）
+- **Gerrit (basic 模式)**: `mcpServers.gerrit-mcp-server.env.GERRIT_USERNAME` + `GERRIT_HTTP_PASSWORD`（直连无 nginx）
+- **Confluence**: `mcpServers.confluence-mcp-server.env.CONFLUENCE_COOKIE`（cookie 模式）
+- **OpenGrok 用户名/密码**: `mcpServers.opengrok-mcp-server.env.OPENGROK_USERNAME` + `OPENGROK_PASSWORD`
+- **Gerrit SSH 密钥**: 由系统 SSH agent 管理（仅 push_to_gerrit 用）
+
+**强烈推荐**：跑一次 `scripts/refresh-auth.{ps1,sh}` 让脚本自动维护 Gerrit + Confluence 凭据；后续 cookie 过期（401）时再跑一次即可。详见 [`steering/auth-refresh.md`](./auth-refresh.md)。
 
 ## 后续补充配置
 

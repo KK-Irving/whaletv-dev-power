@@ -32,12 +32,13 @@
 **AI 动作**: 按以下顺序定位需要修改的代码：
 
 1. **先查模块路径地图**（`module-path-map.md`）：从 Issue 描述/评论中提取关键词（类名、模块名、功能名如 "TvScanConfig"、"TvSettings"、"PQ"、"CEC"），在地图的"典型问题 → 路径推荐对照表"或对应平台小节中查找路径前缀
-2. 命中地图后，用路径前缀**限定搜索范围**：
+2. **本地知识库 `search_local(source="all", mode="hybrid")`**（v2 起 ★ 推荐）：找历史类似 PR、修复 commit、设计文档；命中含相关 gerrit change 时反推改过哪些文件
+3. 命中地图后，用路径前缀**限定搜索范围**：
    - 本地：`git grep -n "ClassName" -- "<path-prefix>/**"`（去掉 wrapper 目录前缀，相对源码根）
    - OpenGrok：`search_code` + 结果再筛 path 或 `search_path` 先收敛
-3. 未命中地图时，按 local-code-guide 标准优先级（① git grep 全仓 → ② 读取已知路径 → ③ OpenGrok `search_symbol`）
+4. 未命中地图时，按 local-code-guide 标准 5 档优先级（地图 → 本地索引 → git grep → 已知路径 → OpenGrok）
 
-**预期输出**: 定位到需要修改的文件和代码位置（标注定位方式：module-path-map / git grep / OpenGrok）
+**预期输出**: 定位到需要修改的文件和代码位置（标注定位方式：module-path-map / search_local / git grep / OpenGrok）
 
 **错误处理**: IF `git grep` 未找到结果，THEN 使用 `search_code` 或 `search_symbol` 进行 OpenGrok 远程搜索作为补充；IF 关键词未命中地图，THEN 记录到 `.learnings/LEARNINGS.md`（分类 `knowledge_gap`），用于补充模块路径地图
 

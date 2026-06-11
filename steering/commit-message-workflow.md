@@ -463,9 +463,9 @@ Reviewer：alice@example.com, bob@example.com
 ```
 ① 分析 Zmind Issue（含附件分析，章节 ⑨）
    ↓
-② Gerrit 检索（search_changes 同 Issue / 同 topic / 同 branch 的历史 Change）
+② Gerrit 检索（先 `search_local(source="gerrit")` 找历史相似 commit message 风格 → 再 `search_changes` 查 Zmind ID / topic 同源 Change）
    ↓
-③ 本地代码分析（先查 module-path-map 命中路径前缀，再 git grep 限定路径搜索；未命中或无结果时降级 OpenGrok search_symbol）
+③ 本地代码分析（先查 module-path-map 命中路径前缀，再 `search_local(source="gerrit")` 找改过该模块的历史 commit，最后 git grep 限定路径搜索；未命中或无结果时降级 OpenGrok search_symbol）
    ↓
 ④ 修改代码
    ↓
@@ -487,8 +487,8 @@ Reviewer：alice@example.com, bob@example.com
 | 步骤 | AI 动作 | 关键工具 |
 |------|---------|----------|
 | ① | 调用 Zmind MCP 的 `get_issue`，按 bug-analysis-workflow 处理附件 | `get_issue` / `download_attachment` |
-| ② | 调用 Gerrit MCP 的 `search_changes`，query 模板：`message:Zmind#<id>` 或 `topic:<id>` | `search_changes` |
-| ③ | 优先查 `module-path-map.md` 命中路径前缀缩小范围；再 `git grep <symbol> -- "<path-prefix>/**"`；无结果时调用 OpenGrok MCP 的 `search_symbol` | `module-path-map` / `git grep` / `search_symbol` |
+| ② | **先**调 `search_local(source="gerrit", mode="hybrid", limit=3)` 找语义相似的历史 commit 作为模板参考；**再**调 Gerrit MCP 的 `search_changes`，query 模板：`message:Zmind#<id>` 或 `topic:<id>` | `search_local` / `search_changes` |
+| ③ | 先查 `module-path-map.md` 命中路径前缀缩小范围；再 `search_local(source="gerrit")` 看历史改过该模块的 commit 模板；再 `git grep <symbol> -- "<path-prefix>/**"`；无结果时调用 OpenGrok MCP 的 `search_symbol` | `module-path-map` / `search_local` / `git grep` / `search_symbol` |
 | ④ | 按 Issue 定位修改代码；多文件或多方案时先 brainstorming | （编辑工具） |
 | ⑤ | 执行 `git diff` 完整展示；不接受 Developer 模糊确认 | `git diff` |
 | ⑥ | 必须 `git add -p`，**禁止** `git add .` / `git add -A` | `git add -p` |
