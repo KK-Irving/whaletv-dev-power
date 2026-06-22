@@ -141,7 +141,7 @@
 | **P0-C** | Aliyun WAF 重试 + 进程级速率/并发门（zmind-mcp v2.1.1） | ✅ 代码完成 |
 | **P0+** | Playwright 凭据自动刷新脚本（refresh-auth.{ps1,sh,mjs}），含 Gerrit SSO + Confluence form login 双账号 | ✅ 代码完成 + smoke 通 |
 | **P1-Conf** | confluence-mcp-server v1.0.0 | ✅ 代码完成 + 3/3 工具通 |
-| **P1-Knowledge** | knowledge-mcp-server v1.0.0（向量+FTS5 hybrid 检索） | ✅ 代码完成 + sync/embed/search 全通 |
+| **P1-Knowledge** | knowledge-mcp-server v1.0.1（向量+FTS5 hybrid 检索；v1.0.1 修复 sync watermark/query/scope 三个 bug） | ✅ 代码完成 + sync/embed/search 全通 |
 | **P2** | AOSP 模块级精搜 + analyze_issue 一键工作流 | ✅ 代码完成 + 编译通过 |
 | **P3** | POWER.md / README.md / steering 升级 + setup-v2 部署脚本 | ✅ 完成（2026-06-11） |
 
@@ -229,7 +229,7 @@
 
 ### FR-007: 本地知识库（向量+FTS5 hybrid）（P1）
 
-**目标**: `knowledge-mcp-server` v1.0.0，三源（zmind / gerrit / confluence）同步 + BGE-small-zh ONNX 嵌入 + SQLite BLOB 存向量 + FTS5 全文 + hybrid 跨源检索。
+**目标**: `knowledge-mcp-server` v1.0.1，三源（zmind / gerrit / confluence）同步 + BGE-small-zh ONNX 嵌入 + SQLite BLOB 存向量 + FTS5 全文 + hybrid 跨源检索。
 
 **状态**: 待开始
 

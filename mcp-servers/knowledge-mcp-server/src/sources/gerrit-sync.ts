@@ -137,15 +137,34 @@ ON CONFLICT(change_id) DO UPDATE SET
 
 function buildQuery(args: { since?: string; query?: string; project?: string }): string {
   const parts: string[] = [];
-  if (args.query) parts.push(args.query);
+  if (args.query) {
+    // 用户传了自定义 query，完全用它，不再叠加默认作用域
+    parts.push(args.query);
+  } else {
+    // 没传自定义 query → 总是加默认作用域过滤（避免拉到所有人的 changes）
+    // 首次（无 since）时叠加 -age:365d 限制时间窗口；增量（有 since）时不需要 -age
+    // 用户可通过 KNOWLEDGE_GERRIT_SYNC_QUERY 环境变量自定义默认作用域
+    const customDefault = (process.env.KNOWLEDGE_GERRIT_SYNC_QUERY ?? "").trim();
+    if (customDefault) {
+      parts.push(customDefault);
+    } else if (args.since) {
+      parts.push("(owner:self OR reviewer:self)");
+    } else {
+      parts.push("(owner:self OR reviewer:self) -age:365d");
+    }
+  }
   if (args.project) parts.push(`project:${args.project}`);
   if (args.since) parts.push(`after:"${args.since}"`);
-  if (parts.length === 0) parts.push("status:open OR -status:open"); // all
   return parts.join(" ");
 }
 
 /**
  * 全量/增量同步 Gerrit changes。
+ *
+ * @param args.query   自定义 query；缺省走 `KNOWLEDGE_GERRIT_SYNC_QUERY` 或 `(owner:self OR reviewer:self) -age:365d`
+ * @param args.project 仅同步特定 project
+ * @param args.since   仅同步 after:since 的 changes（YYYY-MM-DD）
+ * @param args.limit   最大同步条数（防一次性拉爆）。默认 1000；传 0 / 负数 = 不限
  */
 export async function syncGerrit(args: {
   query?: string;
@@ -154,7 +173,14 @@ export async function syncGerrit(args: {
   limit?: number;
 } = {}): Promise<GerritSyncStats> {
   const db = getDb();
-  const limit = Math.max(1, Math.min(50000, args.limit ?? 1000));
+  // limit ≤ 0 → 无限拉
+  const userLimit = args.limit;
+  const limit =
+    userLimit == null
+      ? 1000
+      : userLimit <= 0
+        ? Number.MAX_SAFE_INTEGER
+        : userLimit;
   const stateSince = args.since ?? getSyncState("gerrit", "last_full_sync_date") ?? "";
   const finalQuery = buildQuery({
     since: stateSince,
@@ -172,6 +198,7 @@ export async function syncGerrit(args: {
   let offset = 0;
   let fetched = 0;
   let upserted = 0;
+  let maxUpdated = stateSince;
   const batchSize = 200;
 
   while (fetched < limit) {
@@ -206,12 +233,24 @@ export async function syncGerrit(args: {
     upserted += changes.length;
     offset += changes.length;
 
+    // 跟踪最大 updated（Gerrit 返回 ISO 格式："2026-06-22 10:30:45.123000000"）
+    for (const r of rows) {
+      if (r.updated && r.updated > maxUpdated) maxUpdated = r.updated;
+    }
+
+    process.stderr.write(
+      `[gerrit-sync] page offset=${offset - changes.length}, got=${changes.length}, total=${fetched}\n`,
+    );
+
     if (changes.length < n) break;
     if (!changes[changes.length - 1]?._more_changes) break;
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-  setSyncState("gerrit", "last_full_sync_date", today);
+  // watermark：用已拉取的最大 updated 的 day-only 形式（Gerrit `after:` 接受 YYYY-MM-DD）
+  const watermark = maxUpdated
+    ? maxUpdated.slice(0, 10)
+    : stateSince || new Date().toISOString().slice(0, 10);
+  setSyncState("gerrit", "last_full_sync_date", watermark);
 
-  return { source: "gerrit", fetched, upserted, watermark: today, query: finalQuery };
+  return { source: "gerrit", fetched, upserted, watermark, query: finalQuery };
 }

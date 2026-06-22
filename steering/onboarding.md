@@ -2,284 +2,238 @@
 inclusion: auto
 ---
 
-# 首次配置引导流程
+# 首次配置引导流程（v2）
 
 ## 触发场景
 
 用户首次激活 Power（点击 "Try Power"）或输入"配置"、"setup"、"初始化"等关键词时。
 
-## 目的
+## 关键约束（AI 必读）
 
-一次性引导用户完成所有外部系统的配置和验证，确保后续使用时所有功能即开即用，不会中途要求补充配置。
+### ⚠️ AI 不能直接写 `~/.kiro/settings/mcp.json`
 
-## 引导流程
+Kiro IDE 安全限制：AI 只能编辑当前 workspace 内的文件。`~/.kiro/settings/mcp.json` 在 workspace 外，直接写会报：
 
-### ① Zmind 连接验证
-
-**AI 动作**: 调用 `list_projects` 验证 Zmind 连接是否正常。
-
-- IF 成功 → 显示 "✅ Zmind 连接正常"，进入步骤 ②
-- IF 失败（ZMIND_API_KEY 未配置）→ 引导用户配置：
-  ```
-  ❌ Zmind 未连接
-  
-  请在 mcp.json 中配置 ZMIND_API_KEY：
-  1. 登录 https://zmind.whaletv.com
-  2. 右上角"我的账户" → 左侧"API 访问密钥" → 显示/重置密钥
-  3. 将密钥填入 ~/.kiro/settings/mcp.json 的 env.ZMIND_API_KEY 字段
-  
-  配置完成后请告诉我，我会重新验证。
-  ```
-
----
-
-### ② 获取项目列表 → 引导匹配代码路径
-
-**AI 动作**: 调用 `list_projects` 获取用户可见的所有项目，展示列表并请用户提供映射。
-
-**展示格式**:
 ```
-✅ Zmind 连接正常
+Invalid path: c:\Users\xxx\.kiro\settings\mcp.json resolves to a location outside the workspace
+```
 
-你在 Zmind 上可见的项目：
-1. [cultraview-dvb-amlogic-t950d4-2k-1g] CultraView DVB Amlogic T950D4 2K 1G
-2. [stm-amlogic-t962d4-4k-1-5gb] STM Amlogic T962D4 4K 1.5GB
-3. ...
+**正确做法**：让用户在终端跑 `node scripts/setup-creds.mjs` 或 `scripts/refresh-auth.{ps1,sh}`。脚本本身没有 workspace 限制，可以写到任意路径。AI 只负责**收集凭据 + 给出运行命令**，不直接 fs 写入。
 
-请告诉我你常用的项目对应的本地代码路径，格式如：
+### ⚠️ Kiro Power namespace 兼容
+
+Kiro 安装 Power 后，mcp 配置 key 会加 `power-<powername>-` 前缀（也可能在 `powers.mcpServers` 嵌套下）。`scripts/setup-creds.mjs` 与 `scripts/refresh-auth.mjs` 已实现 **substring 匹配 + 双写**：扫描所有以 server 名结尾的 key 全部更新；都不存在时同时创建本地路径和 Power 路径，覆盖两种安装方式。
+
+## 凭据矩阵（4 套独立账号）
+
+| 系统 | 用户名 | 凭据形式 | 维护方式 |
+|---|---|---|---|
+| **Zmind** | — | API Key（40 位十六进制） | `setup-creds.mjs` 写入，永久 |
+| **Gerrit SSO** | 全小写（如 `winn.wei`） | SSO 密码 | `refresh-auth.{ps1,sh}` 抓 cookie，1-4 周刷新一次 |
+| **Confluence** | 首字母大写（如 `Winn.Wei`） | 独立密码（**不同于 SSO**） | `refresh-auth.{ps1,sh}` form login 抓 cookie |
+| **OpenGrok** | 共享只读账号 | 共享密码 | `setup-creds.mjs` 写入，永久 |
+
+注意：Gerrit / Confluence 是两套**完全独立**的账号系统，用户名首字母大小写都可能不同；refresh-auth 会分别 prompt。
+
+## 引导流程（v2 标准 — 收集 → 写入 → 抓 cookie → 验证）
+
+### 步骤 ①：收集所有 4 套凭据
+
+AI 一次性向用户问清楚 4 套凭据：
+
+```
+为了一次性配置好 5 个 MCP server，我需要收集 4 套独立账号信息：
+
+1. Zmind API Key（40 位十六进制）
+   登录 https://zmind.whaletv.com → 我的账户 → API 访问密钥 → 复制
+
+2. OpenGrok 账号密码
+   公司分配的共享只读账号
+
+3. Gerrit SSO 账号密码
+   登录 https://whale-gerrit.zeasn.com 用的 SSO 用户名（全小写，例 winn.wei）+ 密码
+
+4. Confluence 账号密码
+   登录 https://docs.whaletv.com 用的独立账号（用户名首字母可能大写，例 Winn.Wei）+ 密码
+   注：跟 Gerrit SSO 是两套不同账号
+
+请按以上 4 项依次提供（可以一次贴完）。
+```
+
+收到后 **不要在对话里复述完整凭据**，更不要写到任何文件。下一步靠环境变量传给脚本。
+
+### 步骤 ②：用脚本一次性写入永久凭据
+
+凭据收齐后，让用户在终端执行（注意密码含特殊字符要单引号）：
+
+**Windows PowerShell**：
+
+```powershell
+$env:ZMIND_API_KEY="<填>"; $env:OPENGROK_USERNAME="<填>"; $env:OPENGROK_PASSWORD="<填>"
+node scripts/setup-creds.mjs
+```
+
+**Linux/macOS**：
+
+```bash
+ZMIND_API_KEY='<填>' OPENGROK_USERNAME='<填>' OPENGROK_PASSWORD='<填>' \
+  node scripts/setup-creds.mjs
+```
+
+`setup-creds.mjs` 会：
+- 备份 `~/.kiro/settings/mcp.json` 到 `<path>.bak.<timestamp>`
+- 扫描所有以 server 名结尾的 key（兼容 Kiro Power 与本地两种安装方式）
+- 写入 `ZMIND_API_KEY`（同时给 zmind-mcp + knowledge-mcp）和 `OPENGROK_*`
+- 输出"命中位置"日志（如 `mcpServers.power-whaletv-dev-power-zmind-mcp-server`）
+
+**AI 通过 terminal 调用即可**，不需要直接写 mcp.json。
+
+### 步骤 ③：抓 Gerrit + Confluence cookie
+
+跑 `refresh-auth.{ps1,sh}` 让 Playwright 自动登录抓 cookie：
+
+**Windows**：
+
+```powershell
+PowerShell -ExecutionPolicy Bypass -File scripts\refresh-auth.ps1
+```
+
+**Linux/macOS**：
+
+```bash
+bash scripts/refresh-auth.sh
+```
+
+脚本会：
+- 提示输入 Gerrit SSO 用户名 + 密码（密码不回显、不落盘、不入日志）
+- 提示输入 Confluence 用户名 + 密码（独立账号）
+- Playwright headless Chromium 走 nginx Basic + Gerrit SAML SSO，抓 `GerritAccount` / `XSRF_TOKEN` cookie
+- 同样流程走 Confluence form POST `/dologin.action`，抓 `JSESSIONID` / `seraph.confluence` cookie
+- 自检：用新凭据 GET `/changes/?n=1`，必须 200 才算成功
+- 写入 `~/.kiro/settings/mcp.json`：`GERRIT_AUTH_HEADER` + `GERRIT_COOKIE` + `CONFLUENCE_COOKIE`，也覆盖 knowledge-mcp 的对应字段
+- 命中所有相关 server key（含 Power namespace）
+
+### 步骤 ④：重启 Kiro 加载新凭据
+
+让用户：
+1. 在 Kiro 内 ⌘/Ctrl+Shift+P → `Reload Window`
+2. 或者退出 Kiro 重开
+
+### 步骤 ⑤：验证连接
+
+AI 调用各 MCP 工具实际连一下：
+
+| 工具 | 期望结果 |
+|---|---|
+| `list_projects`（zmind） | 返回项目列表 |
+| `search_changes`（gerrit）`q="status:open" limit=1` | 返回 JSON（首行 `)]}'` 后跟 changes） |
+| `list_spaces`（confluence） | 返回 spaces 数组（**若 403 → 账号无权限，运维侧问题**，详见下面 Confluence 权限说明） |
+| `search_code`（opengrok）`query="test" maxresults=1` | 返回结果 |
+| `sync_zmind`（knowledge）`limit=10` + `embed_pending` `source="zmind"` | 入库 10 条 + 嵌入完成 |
+
+### 步骤 ⑥：项目-代码映射 + 配置总结
+
+AI 调 `list_projects` 把用户可见的 Zmind 项目展示出来，让用户给出代码路径映射：
+
+```
+✅ 配置完成！
+
+系统连接状态：
+✅ Zmind — 已连接（API Key 有效）
+✅ Gerrit — session 模式（cookie 模式有效，过 nginx 双层认证）
+✅ Confluence — cookie 模式有效（list_spaces 通）
+✅ OpenGrok — 代码搜索可用（d4_code / stb16_code / x5_code）
+✅ Knowledge — 本地索引可用
+
+请告诉我你常用的 Zmind 项目对应的本地代码路径：
 - cultraview-dvb-amlogic-t950d4-2k-1g → ~/cvte_code/amlogic/
 - stm-amlogic-t962d4-4k-1-5gb → ~/cvte_code/stm/
 
 （可以只配常用的，后续随时补充）
 ```
 
-**等待用户提供映射后记录**，然后进入步骤 ③。
+记录映射后，告诉用户可以直接说自然语言：
 
----
+- "查看我的待办" — 获取 Issue 列表
+- "用 analyze_issue 分析 #334001" — v2 一键端到端 PR/Bug 分析
+- "用 search_local 找'蓝牙连接异常'" — 跨源历史检索
+- "把 #332669 cp 到 mp" — Cherry-Pick 同步
+- "推送代码到 Gerrit" — push_to_gerrit + 处理评论
 
-### ③ Gerrit 连接验证
+## Confluence 403 权限说明
 
-**AI 动作**: 通过 REST API 验证 Gerrit 连接。**v1.1.0 起 gerrit-mcp-server 支持双通道认证**：
+某些 Confluence 工具（特别是 search / 批量 content API）需要 Atlassian 管理员开通权限。常见错误：
 
-| 模式 | 适用场景 | 配置字段 |
-|------|---------|---------|
-| **session 模式（首选）** | nginx + Gerrit 双层认证网关（公司默认部署） | `GERRIT_AUTH_HEADER` + `GERRIT_COOKIE` |
-| **basic 模式（备选）** | Gerrit 直连无 nginx 网关 | `GERRIT_USERNAME` + `GERRIT_HTTP_PASSWORD` |
-
-**推荐：直接跑凭据自动刷新脚本**（详见 [`steering/auth-refresh.md`](./auth-refresh.md)）：
-
-```powershell
-# Windows
-PowerShell -ExecutionPolicy Bypass -File scripts\refresh-auth.ps1
 ```
-```bash
-# Linux / macOS
-bash scripts/refresh-auth.sh
+Error: Confluence HTTP 403: Not permitted to use confluence
 ```
 
-脚本会：
-- 提示输入 SSO 用户名 + 密码（密码不回显、不落盘）
-- 自动跑 Playwright headless 浏览器登录 nginx + Gerrit
-- 抓取 cookie 写入 `mcp.json`，自检通过才算成功
+这是**账号权限问题，不是配置问题**。即使 cookie 有效（能登录看 spaces），调用批量 content API 可能仍被拦。
 
-> 说明：v1.1.0 双通道认证是为了过公司 nginx + Gerrit 双层（HTTP 协议规定一个请求只能有 1 个 Authorization 头，但允许 1 个 Authorization + 1 个 Cookie 同时存在；脚本利用此设计）。脚本不能跑 / 想手动配置时，参考 `auth-refresh.md` 的 F12 抓取流程。
+**排查**：
+1. 浏览器登录 https://docs.whaletv.com 是否能看到 spaces？
+2. 直接访问 https://docs.whaletv.com/dosearchsite.action?queryString=test 能否搜索？
+3. 若网页能搜但 API 403 → 账号缺 "Use Confluence" 或 "Search" 全局权限
 
-**手动验证（脚本跑成功后用来确认）**:
+**解决**：找运维加 Confluence 全局权限。客户端这边解决不了。
+
+短期 workaround：依赖 confluence-mcp 仍可调 `get_page` 拉单页正文（如果对应空间有 read 权限），但不能用 `search_confluence` 全局搜。
+
+## 网络诊断（连接失败时）
 
 ```bash
-# Linux / macOS / Git Bash — session 模式
-curl -sS \
-  -H "Authorization: $GERRIT_AUTH_HEADER" \
-  -H "Cookie: $GERRIT_COOKIE" \
-  "https://whale-gerrit.zeasn.com/changes/?n=1"
-```
-
-```powershell
-# PowerShell — session 模式
-$headers = @{
-  Authorization = $env:GERRIT_AUTH_HEADER
-  Cookie        = $env:GERRIT_COOKIE
-}
-Invoke-WebRequest -Uri "https://whale-gerrit.zeasn.com/changes/?n=1" -Headers $headers -UseBasicParsing
-```
-
-```bash
-# basic 模式（无 nginx 时）
-curl -sS -u "<用户名>:<HTTP密码>" "https://whale-gerrit.zeasn.com/a/changes/?n=1"
-```
-
-- IF 返回 JSON（首行 `)]}'` 后跟 changes 数组）→ ✅ 显示 "Gerrit REST 连接正常（gerrit-mcp-server 14 个工具均可用）"
-- IF 401 + realm 含 `Welcomme to ...` → nginx 那一层认证未过，检查 `GERRIT_AUTH_HEADER`（session 模式）或检查 nginx 是否要求其他 header
-- IF 401 + realm 含 `Gerrit Code Review` → Gerrit 自身认证未过，session 模式下检查 cookie 是否过期、basic 模式下检查 HTTP_PASSWORD
-- IF 连接超时或域名解析失败 → 进入"网络诊断步骤"
-
-**SSH 公钥仍然必要**（仅用于 `push_to_gerrit` 内部的 git push）：
-
-```bash
-ssh -p 29418 <用户名>@whale-gerrit.zeasn.com gerrit version
-```
-
-- IF 返回 `gerrit version 3.6.0` → ✅ "push_to_gerrit 可用"
-- IF 失败 → 引导配置 SSH 公钥（仅影响 push_to_gerrit；其他 13 个 REST 工具不受影响）
-
-**网络诊断步骤**（任一通道失败时执行）：
-
-```bash
-# 1. 检查 DNS 解析
+# DNS
 nslookup whale-gerrit.zeasn.com
-
-# 2. 检查 HTTPS 端口连通性（REST 主通道）
-nc -zv whale-gerrit.zeasn.com 443 -w 5
-
-# 3. 检查 SSH 端口连通性（仅 push_to_gerrit 需要）
-nc -zv whale-gerrit.zeasn.com 29418 -w 5
-
-# 4. 检查是否需要代理
-echo $http_proxy $https_proxy
-```
-
-根据诊断结果给出针对性建议：
-- DNS 解析失败 → 检查 DNS 配置或 /etc/hosts
-- 443 端口不通 → "HTTPS 端口被拦截，REST 通道不可用，gerrit-mcp-server 全部不可用"
-- 29418 端口不通 → "SSH 端口被拦截，push_to_gerrit 不可用；其他 13 个 REST 工具仍可用"
-- 端口都通但 REST 401 → 跑 `scripts/refresh-auth.*` 重抓凭据
-
-**可选**: 询问默认 Reviewer 列表（后续推送时使用）。
-
----
-
-### ④ 内部文档系统连接验证
-
-**AI 动作**: 与 Gerrit 类似，文档中心也走 cookie 认证。**优先用步骤 ③ 同一次跑的 `scripts/refresh-auth.*` 一并完成**——脚本会同时抓 Confluence 的 `JSESSIONID / seraph.confluence` cookie 写入 mcp.json。
-
-如果脚本已跑过，直接验证：
-
-```bash
-# 用 mcp.json 里的 CONFLUENCE_COOKIE 验证
-curl -sS \
-  -H "Cookie: $CONFLUENCE_COOKIE" \
-  "https://docs.whaletv.com/rest/api/content?limit=1"
-```
-
-- IF 返回 JSON 内容 → ✅ "内部文档系统连接正常"
-- IF 返回 401 / 重定向到登录页 → cookie 过期或脚本没抓到，重跑 `scripts/refresh-auth.*`
-- IF 用户选择跳过 → 标注 "⚠️ 内部文档暂未配置，后续分析问题时将跳过文档查询"
-
-**手动方式**（不想用脚本）：浏览器登录后 F12 → Network → 任一 `/rest/api/...` 请求 → Headers → 复制 `Cookie:` 后整串 → 填到 `mcp.json` 的 `mcpServers.confluence-mcp-server.env.CONFLUENCE_COOKIE`。
-
-**网络诊断步骤**（连接失败时执行）：
-```bash
-# 检查 DNS 解析
 nslookup docs.whaletv.com
+nslookup zmind.whaletv.com
+nslookup opengrok.zeasn.com
 
-# 检查 HTTPS 端口连通性
+# 端口
+nc -zv whale-gerrit.zeasn.com 443 -w 5
+nc -zv whale-gerrit.zeasn.com 29418 -w 5   # SSH 仅 push_to_gerrit 用
 nc -zv docs.whaletv.com 443 -w 5
 
-# 检查代理配置
+# 代理
 echo $http_proxy $https_proxy
 ```
 
-根据诊断结果给出建议：
-- DNS 不通 → "请检查 DNS 配置，或在 /etc/hosts 中添加 docs.whaletv.com 的 IP 映射"
-- 端口不通 → "HTTPS 端口被拦截，请确认是否需要配置代理"
-- 端口通但请求失败 → 跑 `scripts/refresh-auth.*` 重抓 cookie
+针对性建议：
+- DNS 不通 → 检查 DNS 或 `/etc/hosts`
+- 443 不通 → HTTPS 端口被拦截 / 需要代理
+- 29418 不通 → SSH 端口被拦截，仅 `push_to_gerrit` 不可用，其他 13 个 REST 工具不受影响
+- 端口通但 401/403 → 重跑 `scripts/refresh-auth.*` 抓新 cookie
 
----
+## 失败回滚
 
-### ⑤ OpenGrok 代码搜索配置
+`setup-creds.mjs` / `refresh-auth.mjs` 写入前都备份 mcp.json 到 `<path>.bak.<timestamp>`。
 
-**AI 动作**: 获取用户的 OpenGrok 账号密码，然后通过搜索 API 实际验证连通性。
+回滚：
 
-**引导提示**:
-```
-接下来配置 OpenGrok 代码搜索。
-
-OpenGrok 地址: https://opengrok.zeasn.com
-用途：远程搜索公版代码（只读），当本地没有对应项目代码时使用
-
-请提供你的账号信息：
-- 用户名：
-- 密码：
-```
-
-**验证方式**: 用户提供凭据后，执行搜索 API 验证：
 ```bash
-curl -s -u "<用户名>:<密码>" "https://opengrok.zeasn.com/api/v1/search?full=test&maxresults=1"
+cp ~/.kiro/settings/mcp.json.bak.<timestamp> ~/.kiro/settings/mcp.json
 ```
 
-- IF 返回 JSON 搜索结果 → 显示 "✅ OpenGrok 连接正常"，并展示可用项目列表：
-  ```
-  ✅ OpenGrok 连接正常
+重启 Kiro 即可。
 
-  可用项目（公版代码库）：
-  • d4_code — D4 平台
-  • stb16_code — STB16 平台
-  • x5_code — X5 平台
-  ```
-- IF 返回 401 → 提示认证失败，请重新提供
-- IF 用户选择跳过 → 标注 "⚠️ OpenGrok 暂未配置，远程代码搜索不可用"
+## 凭据存储位置（用于排错时手动检查）
 
----
+`~/.kiro/settings/mcp.json` 中 server entry 的 `env` 字段：
 
-### ⑥ 配置总结
+| 凭据 | 字段 |
+|---|---|
+| Zmind API Key | `<server>.env.ZMIND_API_KEY` |
+| OpenGrok 用户名 | `<server>.env.OPENGROK_USERNAME` |
+| OpenGrok 密码 | `<server>.env.OPENGROK_PASSWORD` |
+| Gerrit Authorization header | `<server>.env.GERRIT_AUTH_HEADER` |
+| Gerrit Cookie | `<server>.env.GERRIT_COOKIE` |
+| Confluence Cookie | `<server>.env.CONFLUENCE_COOKIE` |
 
-**AI 动作**: 汇总所有配置状态，展示最终结果。
-
-**展示格式**:
-```
-🎉 配置完成！
-
-系统连接状态：
-✅ Zmind — 已连接（API Key 有效）
-✅ Gerrit — SSH 连接正常（gerrit version 3.6.0）
-✅ 内部文档 — Confluence API 可访问
-✅ OpenGrok — 代码搜索可用（d4_code、stb16_code、x5_code）
-
-项目-代码映射：
-• cultraview-dvb-amlogic-t950d4-2k-1g → ~/cvte_code/amlogic/
-• stm-amlogic-t962d4-4k-1-5gb → ~/cvte_code/stm/
-
-✨ 已自动启用：模块路径地图（D4 / X5 / STB 三平台 ~90+ 业务子模块的精确路径前缀）
-   AI 在分析问题、定位代码时会先查地图缩小搜索范围，避免大范围 grep。
-
-你现在可以：
-• "查看我的待办" — 获取 Issue 列表
-• "帮我处理 PR #12345" — 全链路 PR/CR 处理
-• "分析下 #334001" — Bug 自动分析
-• "把 #332669 cp 到 mp" — Cherry-Pick 同步
-• "推送代码到 Gerrit" — push_to_gerrit + 处理评论
-• "回顾经验" — 查看历史经验和错误记录
-```
-
----
-
-## 关键约束
-
-- 引导流程必须**一次性完成所有配置**，不允许跳过步骤（文档系统除外，可跳过）
-- 每个步骤验证失败时，必须提供明确的修复指引
-- 用户修复后可以说"已配置"或"重试"，AI 重新验证该步骤
-- 项目-代码映射可以只配常用的，但必须至少配一个
-- 配置总结必须展示所有系统的最终状态
-- UI 提示统一使用"用户名"和"密码"，不暴露技术细节（如 HTTP Password、Basic Auth 等）
-- 不要在输出中暴露用户的密码或 API Key
-- 配置过程中的失败和解决方案记录到 `.learnings/ERRORS.md`，便于后续用户遇到相同问题时快速解决
-
-## 凭据存储说明
-
-各系统凭据的存储位置（统一在 `~/.kiro/settings/mcp.json` 的 `mcpServers.<server>.env`）：
-- **Zmind API Key**: `mcpServers.zmind-mcp-server.env.ZMIND_API_KEY`
-- **Gerrit (session 模式)**: `mcpServers.gerrit-mcp-server.env.GERRIT_AUTH_HEADER` + `GERRIT_COOKIE`（首选，过 nginx 双层）
-- **Gerrit (basic 模式)**: `mcpServers.gerrit-mcp-server.env.GERRIT_USERNAME` + `GERRIT_HTTP_PASSWORD`（直连无 nginx）
-- **Confluence**: `mcpServers.confluence-mcp-server.env.CONFLUENCE_COOKIE`（cookie 模式）
-- **OpenGrok 用户名/密码**: `mcpServers.opengrok-mcp-server.env.OPENGROK_USERNAME` + `OPENGROK_PASSWORD`
-- **Gerrit SSH 密钥**: 由系统 SSH agent 管理（仅 push_to_gerrit 用）
-
-**强烈推荐**：跑一次 `scripts/refresh-auth.{ps1,sh}` 让脚本自动维护 Gerrit + Confluence 凭据；后续 cookie 过期（401）时再跑一次即可。详见 [`steering/auth-refresh.md`](./auth-refresh.md)。
+`<server>` 形如 `zmind-mcp-server`、`power-whaletv-dev-power-zmind-mcp-server`、`powers.mcpServers.power-whaletv-dev-power-zmind-mcp-server` 三种之一（取决于 Kiro 安装方式）。
 
 ## 后续补充配置
 
-用户随时可以说"补充配置"或"添加项目映射"来更新配置：
-- 添加新的项目-代码映射
-- 更新 Reviewer 列表
-- 启用 OpenGrok（当服务开放后）
-- 更新 Confluence 密码
+用户随时可以：
+- "补充配置" / "添加项目映射" — 更新代码路径映射
+- "cookie 又过期了" — 重跑 `refresh-auth.{ps1,sh}` 抓新 cookie
+- "更新 OpenGrok 密码" — 重跑 `setup-creds.mjs`，只设 `OPENGROK_PASSWORD`
+- "更新 Zmind API Key" — 重跑 `setup-creds.mjs`，只设 `ZMIND_API_KEY`

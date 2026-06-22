@@ -111,7 +111,7 @@
 - POWER.md 升级到 5 个 mcp server
 - README.md 项目结构与版本号同步
 - `setup-v2.{ps1,sh}` 一键部署脚本
-- 各 server `npm publish`（gerrit v1.1.0 / zmind v2.1.1 / confluence v1.0.0 / knowledge v1.0.0）
+- 各 server `npm publish`（gerrit v1.1.0 / zmind v2.1.1 / confluence v1.0.0 / knowledge v1.0.1）
 
 ## 发布尾注（2026-06-11）
 

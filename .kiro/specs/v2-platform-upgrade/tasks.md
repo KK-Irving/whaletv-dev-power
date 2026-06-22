@@ -318,7 +318,7 @@
     - `@kk-irving/gerrit-mcp-server` v1.0.0 → **v1.1.0**
     - `@kk-irving/zmind-mcp-server` v2.0.0 → **v2.1.1**（v2.1.0 publish 后发现 bin path 含 `./` 被 npm strip，立即 v2.1.1 修复重发）
     - `@kk-irving/confluence-mcp-server` **v1.0.0**（首发）
-    - `@kk-irving/knowledge-mcp-server` **v1.0.0**（首发）
+    - `@kk-irving/knowledge-mcp-server` **v1.0.1**（首发 v1.0.0 + 立即 v1.0.1 修复 sync watermark/query/scope 三个 bug，见 ERR-002/003/007）
   - [ ] 21.5 升级 POWER.md version 字段、git tag `v2.0.0`
 
 ## Task Dependency Graph

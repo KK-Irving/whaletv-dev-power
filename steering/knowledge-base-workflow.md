@@ -2,7 +2,7 @@
 inclusion: auto
 ---
 
-# 本地知识库工作流（knowledge-mcp v1.0.0）
+# 本地知识库工作流（knowledge-mcp v1.0.1）
 
 ## 何时用
 
@@ -103,8 +103,8 @@ analyze_issue(
 ### 全量初始化（首次部署）
 
 ```
-sync_zmind({ limit: 5000 })          # 拉 Zmind issue
-sync_gerrit({ limit: 5000 })         # 拉 Gerrit changes
+sync_zmind({ limit: 5000 })          # 拉 Zmind issue（limit=0 / -1 = 不限，拉到 API 返回空）
+sync_gerrit({ limit: 5000 })         # 拉 Gerrit changes，默认 query=(owner:self OR reviewer:self) -age:365d
 sync_confluence({ space: "RDCenter", limit: 2000 })  # 文档中心
 
 embed_pending({ source: "zmind", batch_size: 200 })       # 多次跑直到 total_pending=0
@@ -114,16 +114,22 @@ embed_pending({ source: "confluence", batch_size: 200 })
 
 首次 `embed_pending` 会自动下载 BGE-small-zh ONNX 模型（~80MB 到 `./data/models/`），约 1-3 分钟。后续启动秒级。
 
+> **进度反馈**（v1.0.1+）：所有 sync 工具会输出 stderr 进度，如 `[gerrit-sync] page offset=0, got=200, total=200`，长 sync 不再静默。
+
 ### 增量同步（cookie/key 仍有效时）
 
 ```
 sync_zmind()        # 不传 since 时用上次 last_full_sync 水位增量拉
-sync_gerrit()
-sync_confluence()
+sync_gerrit()       # default scope (owner:self OR reviewer:self) 始终生效，不会因增量退化拉所有人 changes
+sync_confluence()   # CQL lastmodified > "YYYY-MM-DD HH:mm" 增量
 embed_pending(source=...)  # 处理新增的 stale 行
 ```
 
 建议每日跑一次（手动或定时任务）。
+
+> **watermark 行为**（v1.0.1+）：watermark 用"已拉取的最大 updated"而非"sync 开始时间"，避免 sync 期间新数据漏拉。
+> **default scope**（v1.0.1+）：sync_gerrit 默认 query 中的 `(owner:self OR reviewer:self)` 在增量同步时**始终保留**，不会因 since 参数让其退化为 `after:"..."` 拉所有人 changes。
+> **拉所有数据**：`limit: 0` 或 `limit: -1` = 不限，循环到 API 返回空。
 
 ### AOSP 索引（可选，需要本地 repo）
 
@@ -184,6 +190,9 @@ Commit Message (commit-message-workflow):
 | `search_local` 返回空 | 先确认 `embed_pending` 跑过；`mode=fts` 是否过严，换 `hybrid` |
 | `search_local` 跨源某源失败 | 工具返回 `<source>_error` 字段，看具体错误（多半是凭据或网络） |
 | `sync_gerrit` 401 | cookie 过期，跑 `scripts/refresh-auth` |
-| `sync_confluence` 302 → /login.action | 同上 |
+| `sync_gerrit` 0 命中（v1.0.0） | 已知 bug，升级到 v1.0.1（修复 default query 解析 + 增量丢失 scope） |
+| `sync_zmind` / `sync_confluence` 第二次起 0 命中（v1.0.0） | 已知 bug（watermark ISO 格式），升级到 v1.0.1 |
+| `sync_confluence` 302 → /login.action | cookie 过期，跑 `scripts/refresh-auth` |
+| `sync_confluence` 403 "Not permitted to use confluence" | **账号权限问题**（不是配置）。账号缺 Atlassian 全局 "Use Confluence"+"Search" 权限，找运维加。`get_page` 单页可能仍可用（如对应空间有 read 权限） |
 | AOSP `index_aosp_module` 慢 | 一个模块 ~ 几千 chunks 几分钟正常；用 `clear_aosp_index` 重置 |
 | `node:sqlite not found` | Node 版本 < 22.5.0，升级 |

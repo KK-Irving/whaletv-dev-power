@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * knowledge-mcp-server v1.0.0
+ * knowledge-mcp-server v1.0.1
  *
  * 本地三源知识库（Zmind PR / Gerrit changes / Confluence pages）：
  *   - SQLite + FTS5 全文索引
@@ -41,7 +41,7 @@ import { embedAospPending } from "./aosp/embed-aosp.js";
 import { listModulesOfPlatform, loadModuleMap } from "./aosp/module-map-loader.js";
 import { analyzeIssue } from "./analyze-issue.js";
 
-const server = new McpServer({ name: "knowledge-mcp-server", version: "1.0.0" });
+const server = new McpServer({ name: "knowledge-mcp-server", version: "1.0.1" });
 
 // =============================================================================
 // 错误统一包装
@@ -254,7 +254,7 @@ async function main() {
   }
 
   console.error(
-    `[knowledge-mcp-server v1.0.0] started — db=${config.dbPath}, model=${config.embeddingModelId} (dim=${config.embeddingDim}, threads=${config.embeddingThreads})`,
+    `[knowledge-mcp-server v1.0.1] started — db=${config.dbPath}, model=${config.embeddingModelId} (dim=${config.embeddingDim}, threads=${config.embeddingThreads})`,
   );
 }
 

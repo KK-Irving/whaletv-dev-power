@@ -266,7 +266,7 @@ bash scripts/refresh-auth.sh
 ### 测试 1: 启动 banner
 
 ```
-[knowledge-mcp-server v1.0.0] started — db=./data/knowledge.db, model=Xenova/bge-small-zh-v1.5 (dim=512, threads=2)
+[knowledge-mcp-server v1.0.1] started — db=./data/knowledge.db, model=Xenova/bge-small-zh-v1.5 (dim=512, threads=2)
 ```
 
 ### 测试 2: sync_zmind 小批量
@@ -446,7 +446,7 @@ bash scripts/refresh-auth.sh
 
 ### P1
 - [ ] confluence-mcp v1.0.0：list_spaces / search_confluence / get_page 三件套通过
-- [ ] knowledge-mcp v1.0.0：sync_zmind / sync_gerrit / sync_confluence 各跑一批
+- [ ] knowledge-mcp v1.0.1：sync_zmind / sync_gerrit / sync_confluence 各跑一批
 - [ ] embed_pending 三源各跑完 200 条
 - [ ] search_local hybrid 模式跨源命中，响应 < 500ms
 

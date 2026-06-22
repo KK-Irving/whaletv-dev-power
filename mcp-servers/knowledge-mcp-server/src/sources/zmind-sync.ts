@@ -75,7 +75,7 @@ ON CONFLICT(id) DO UPDATE SET
  * 全量/增量同步 Zmind issues。
  *
  * @param args.since  仅同步 updated_on >= since 的 issues（YYYY-MM-DD）。未传则用 sync_state 水位。
- * @param args.limit  最大同步条数（防一次性拉爆）。默认 1000。
+ * @param args.limit  最大同步条数（防一次性拉爆）。默认 1000；传 0 / 负数 = 不限（拉到 API 返回空）
  * @param args.statusId 状态过滤；默认 "*" 全部
  */
 export async function syncZmind(args: {
@@ -84,7 +84,14 @@ export async function syncZmind(args: {
   statusId?: string;
 } = {}): Promise<ZmindSyncStats> {
   const db = getDb();
-  const limit = Math.max(1, Math.min(50000, args.limit ?? 1000));
+  // limit ≤ 0 → 无限拉（直到 API 返回空）
+  const userLimit = args.limit;
+  const limit =
+    userLimit == null
+      ? 1000
+      : userLimit <= 0
+        ? Number.MAX_SAFE_INTEGER
+        : userLimit;
   const stateSince = args.since ?? getSyncState("zmind", "last_full_sync") ?? "";
 
   const upsert = db.prepare(UPSERT_SQL);
@@ -97,6 +104,7 @@ export async function syncZmind(args: {
   let offset = 0;
   let fetched = 0;
   let upserted = 0;
+  let maxUpdatedOn = stateSince; // 用于设置 watermark = 已拉取的最大 updated_on
   const pageSize = 100;
 
   while (fetched < limit) {
@@ -108,7 +116,8 @@ export async function syncZmind(args: {
       offset: String(offset),
       limit: String(batch),
     };
-    if (stateSince) params.updated_on = `>=${stateSince}`;
+    // Redmine 接受 `>=YYYY-MM-DD` 格式；ISO 时间串会解析失败 → 强制截到 day
+    if (stateSince) params.updated_on = `>=${stateSince.slice(0, 10)}`;
 
     const data = await zmindGet("/issues.json", params);
     const issues = data.issues ?? [];
@@ -132,10 +141,25 @@ export async function syncZmind(args: {
     upserted += issues.length;
     offset += issues.length;
 
+    // 跟踪最大 updated_on（Zmind 返回 ISO 格式，截到 day 即可比较）
+    for (const r of rows) {
+      if (r.updated_on && r.updated_on > maxUpdatedOn) {
+        maxUpdatedOn = r.updated_on;
+      }
+    }
+
+    process.stderr.write(
+      `[zmind-sync] page offset=${offset - issues.length}, got=${issues.length}, total=${fetched}\n`,
+    );
+
     if (issues.length < batch) break;
   }
 
-  const watermark = new Date().toISOString();
+  // watermark：用已拉取的最大 updated_on 的 day-only 形式（Redmine 接受 YYYY-MM-DD）
+  // 若没拉到任何数据，保留 stateSince（不前推）
+  const watermark = maxUpdatedOn
+    ? maxUpdatedOn.slice(0, 10)
+    : stateSince || new Date().toISOString().slice(0, 10);
   setSyncState("zmind", "last_full_sync", watermark);
 
   return { source: "zmind", fetched, upserted, watermark };

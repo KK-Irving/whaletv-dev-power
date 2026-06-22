@@ -128,11 +128,27 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * 把 ISO 时间戳（含 T、Z）规范化为 CQL 可接受的 `YYYY-MM-DD HH:mm`。
+ * Atlassian CQL parser 要求 day-or-minute 精度，不支持秒、毫秒、Z 后缀。
+ *
+ * @example
+ *   "2026-06-22T10:30:45.123Z"  →  "2026-06-22 10:30"
+ *   "2026-06-22"                →  "2026-06-22 00:00"
+ */
+function toCqlDateTime(s: string): string {
+  if (!s) return "";
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+  if (!m) return s;
+  const [, y, mo, d, hh = "00", mm = "00"] = m;
+  return `${y}-${mo}-${d} ${hh}:${mm}`;
+}
+
+/**
  * 全量/增量同步 Confluence pages。
  *
  * @param args.space  仅同步指定空间（可重复传入多个空间用 CSV，如 "TVENG,DOC"）
- * @param args.limit  最大同步条数（防一次性拉爆）。默认 1000
- * @param args.since  仅同步 lastmodified > since 的页面（YYYY-MM-DD HH:MM）
+ * @param args.limit  最大同步条数（防一次性拉爆）。默认 1000；传 0 / 负数 = 不限
+ * @param args.since  仅同步 lastmodified > since 的页面（YYYY-MM-DD HH:mm）
  */
 export async function syncConfluence(args: {
   space?: string;
@@ -140,8 +156,16 @@ export async function syncConfluence(args: {
   limit?: number;
 } = {}): Promise<ConfluenceSyncStats> {
   const db = getDb();
-  const limit = Math.max(1, Math.min(50000, args.limit ?? 1000));
-  const stateSince = args.since ?? getSyncState("confluence", "last_full_sync") ?? "";
+  // limit ≤ 0 → 无限拉
+  const userLimit = args.limit;
+  const limit =
+    userLimit == null
+      ? 1000
+      : userLimit <= 0
+        ? Number.MAX_SAFE_INTEGER
+        : userLimit;
+  const stateSinceRaw = args.since ?? getSyncState("confluence", "last_full_sync") ?? "";
+  const stateSince = stateSinceRaw ? toCqlDateTime(stateSinceRaw) : "";
 
   // 决定要同步的空间集合
   let spaces: string[];
@@ -160,16 +184,18 @@ export async function syncConfluence(args: {
 
   let fetched = 0;
   let upserted = 0;
+  let maxUpdated = stateSinceRaw;
   const pageSize = 100;
 
   for (const spaceKey of spaces) {
     let start = 0;
+    let pageInSpace = 0;
     while (fetched < limit) {
       const remaining = limit - fetched;
       const n = Math.min(pageSize, remaining);
       let resp: ListResp;
       if (stateSince) {
-        // 走 CQL 增量
+        // 走 CQL 增量（lastmodified 用 day/minute 精度格式）
         const cql = `space.key = "${spaceKey}" AND type = page AND lastmodified > "${stateSince}"`;
         resp = await confluenceGet<ListResp>("/rest/api/content/search", {
           cql,
@@ -204,6 +230,16 @@ export async function syncConfluence(args: {
       fetched += items.length;
       upserted += items.length;
       start += items.length;
+      pageInSpace++;
+
+      // 跟踪最大 updated（用于 watermark）
+      for (const r of rows) {
+        if (r.updated && r.updated > maxUpdated) maxUpdated = r.updated;
+      }
+
+      process.stderr.write(
+        `[confluence-sync] space=${spaceKey} page=${pageInSpace}, got=${items.length}, total=${fetched}\n`,
+      );
 
       if (items.length < n) break;
       await sleep(CONFLUENCE_REQUEST_DELAY_MS);
@@ -211,7 +247,8 @@ export async function syncConfluence(args: {
     if (fetched >= limit) break;
   }
 
-  const watermark = new Date().toISOString();
+  // watermark：用已拉取的最大 updated 时间的 CQL 格式（YYYY-MM-DD HH:mm）
+  const watermark = maxUpdated ? toCqlDateTime(maxUpdated) : stateSince || toCqlDateTime(new Date().toISOString());
   setSyncState("confluence", "last_full_sync", watermark);
 
   return {

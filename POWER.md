@@ -53,7 +53,7 @@ author: "WhaleTV Team"
 | opengrok-mcp-server | v1.2.0 | 4 | 全文 / 符号 / 路径搜索 + 文件读取 |
 | gerrit-mcp-server | **v1.1.0** | 14 | REST 双通道认证（session + basic），cherry_pick 自动执行，14 个工具 100% 兼容 v1.0 |
 | confluence-mcp-server | **v1.0.0** | 3 | search_confluence / get_page / list_spaces；cookie 认证（form login） |
-| knowledge-mcp-server | **v1.0.0** | 12 | 三源同步 + AOSP 索引 + 嵌入 + hybrid 检索 + analyze_issue 端到端 |
+| knowledge-mcp-server | **v1.0.1** | 12 | 三源同步 + AOSP 索引 + 嵌入 + hybrid 检索 + analyze_issue 端到端；v1.0.1 修复 sync watermark/query/scope 三个 bug |
 
 ## Available Steering Files
 
@@ -134,7 +134,7 @@ bash scripts/refresh-auth.sh                                         # Linux/mac
 
 > ⚠️ Confluence 是独立账号系统，**不走 SSO**（用户名首字母可能与 SSO 不同）。`refresh-auth` 会单独 prompt 收 Confluence 凭据。
 
-#### knowledge-mcp-server (v1.0.0) — **复用三源凭据**
+#### knowledge-mcp-server (v1.0.1) — **复用三源凭据**
 - 主键：`KNOWLEDGE_DB_PATH`（默认 `./data/knowledge.db`）+ `KNOWLEDGE_MODEL_CACHE_DIR`
 - 复用：`ZMIND_API_KEY` + `GERRIT_AUTH_HEADER`+`GERRIT_COOKIE` + `CONFLUENCE_COOKIE`（与上面三个 server 同源）
 
@@ -258,7 +258,7 @@ list_aosp_modules → index_aosp_module → embed_aosp_pending → search_aosp
 ### confluence-mcp-server v1.0.0（3 个工具）
 `search_confluence`（CQL 自动包装）/ `get_page`（HTML→8000 字纯文本）/ `list_spaces`
 
-### knowledge-mcp-server v1.0.0（12 个工具）
+### knowledge-mcp-server v1.0.1（12 个工具）
 
 同步：`sync_zmind` / `sync_gerrit` / `sync_confluence`
 
@@ -287,6 +287,12 @@ AOSP：`list_aosp_modules` / `index_aosp_module` / `clear_aosp_index` / `search_
 
 ### Confluence `auth_failed (302 → /login.action)`
 同上，cookie 过期。注意 Confluence 凭据是**独立账号**，refresh-auth 会单独 prompt。
+
+### Confluence `403 Not permitted to use confluence`
+**账号权限问题，不是配置问题**。即使 cookie 有效，账号缺少 Atlassian 全局 "Use Confluence" + "Search" 权限时，所有批量 content API（`search_confluence` / `sync_confluence`）会被拒。
+- 排查：浏览器登录 docs.whaletv.com 是否能搜索？能 → API 权限缺失
+- 解决：找运维或 Atlassian 管理员加权限，客户端解决不了
+- workaround：`get_page` 拉单页可能仍可用（如对应空间有 read 权限）
 
 ### `auth_mode=missing`（启动 banner）
 两组凭据都不全。运行 refresh-auth；或检查 mcp.json 的 `GERRIT_AUTH_HEADER`+`GERRIT_COOKIE`（首选）/ `GERRIT_USERNAME`+`GERRIT_HTTP_PASSWORD`（备选）。

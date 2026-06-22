@@ -30,7 +30,7 @@ WhaleTV Developer Power 是一个面向 WhaleTV 全体开发者的 [Kiro Power](
 | **gerrit-mcp-server** | v1.1.0 | 14 | REST 双通道认证（session 过 nginx 双层网关 / basic 直连），`cherry_pick_change` 自动执行，`get_unresolved_threads` 直接拿 uuid（无需 NoteDb） |
 | **opengrok-mcp-server** | v1.2.0 | 4 | 全文 / 符号 / 路径搜索 + 文件读取 |
 | **confluence-mcp-server** | v1.0.0（新） | 3 | `search_confluence`（CQL 自动包装）/ `get_page` / `list_spaces`，cookie 认证（独立账号 form login） |
-| **knowledge-mcp-server** | v1.0.0（新） | 12 | 三源同步（zmind/gerrit/confluence）+ BGE-small-zh ONNX 嵌入 + SQLite BLOB 向量 + FTS5 全文 + hybrid 跨源检索 + AOSP 模块级精搜 + **`analyze_issue` 端到端工作流** |
+| **knowledge-mcp-server** | v1.0.1（新） | 12 | 三源同步（zmind/gerrit/confluence）+ BGE-small-zh ONNX 嵌入 + SQLite BLOB 向量 + FTS5 全文 + hybrid 跨源检索 + AOSP 模块级精搜 + **`analyze_issue` 端到端工作流** |
 
 ### 工作流亮点
 
@@ -65,7 +65,7 @@ whaletv-dev-power/
 │   │   └── src/
 │   │       ├── index.ts | auth.ts | http-client.ts | html-strip.ts
 │   │       └── tools/                    # search / get-page / list-spaces
-│   └── knowledge-mcp-server/             # v1.0.0（新）— 12 个工具
+│   └── knowledge-mcp-server/             # v1.0.1（新）— 12 个工具
 │       └── src/
 │           ├── index.ts                  # 12 个工具注册
 │           ├── db.ts                     # node:sqlite（Node 22.5+ 内置）+ FTS5 + 触发器
@@ -79,10 +79,11 @@ whaletv-dev-power/
 │
 ├── scripts/                              # v2 运维脚本
 │   ├── package.json                      # Playwright ^1.48
-│   ├── refresh-auth.mjs                  # 核心：Playwright 抓 cookie + form login + 写 mcp.json
+│   ├── refresh-auth.mjs                  # 核心：Playwright 抓 Gerrit/Confluence cookie，深合并写 mcp.json（含 Power namespace 双写）
 │   ├── refresh-auth.ps1                  # Windows 壳（隐藏密码）
 │   ├── refresh-auth.sh                   # Linux/macOS 壳
-│   ├── setup-v2.ps1                      # Windows 一键部署（依赖检查 + Playwright 安装 + 凭据刷新）
+│   ├── setup-creds.mjs                   # Zmind / OpenGrok 永久凭据写入（绕过 Kiro IDE workspace 限制）
+│   ├── setup-v2.ps1                      # Windows 一键部署（依赖 + Playwright + 4 套凭据交互 + setup-creds + refresh-auth）
 │   └── setup-v2.sh                       # Linux/macOS 一键部署
 │
 ├── steering/                             # 12 份工作流指南
@@ -137,7 +138,7 @@ whaletv-dev-power/
    ```
 3. 等待安装完成
 
-### Step 2：跑一键部署（推荐）
+### Step 2：跑一键部署（全程 ~ 2 分钟）
 
 ```powershell
 # Windows
@@ -149,45 +150,25 @@ PowerShell -ExecutionPolicy Bypass -File scripts\setup-v2.ps1
 bash scripts/setup-v2.sh
 ```
 
-脚本会：
+脚本会全程交互式引导：
 
 1. 检查 Node ≥ 22.5、unar/7z 可选警告
 2. 安装 Playwright + Chromium（首次约 150MB，后续刷新秒级）
-3. 调用 `refresh-auth` 抓 Gerrit + Confluence cookie 写入 `~/.kiro/settings/mcp.json`
-4. 提示手填的 `ZMIND_API_KEY` / `OPENGROK_*` 凭据位置
+3. **依次 prompt 4 套凭据**（密码不回显、不落盘、不入日志）：
+   - Zmind API Key（登录 zmind.whaletv.com → 我的账户 → API 访问密钥）
+   - OpenGrok 用户名 + 密码（公司分配）
+   - Gerrit SSO 用户名（全小写，如 `winn.wei`）+ SSO 密码
+   - Confluence 用户名（首字母大写，如 `Winn.Wei`，**独立账号**）+ 独立密码
+4. 调 `setup-creds.mjs` 把 Zmind + OpenGrok 凭据写到 `~/.kiro/settings/mcp.json`
+5. 调 `refresh-auth.mjs` 跑 Playwright 抓 Gerrit/Confluence cookie 写入
 
-### Step 3：手填两组凭据
+### Step 3：重启 Kiro 加载新凭据
 
-打开 `~/.kiro/settings/mcp.json`，在对应 `env` 字段填入：
+`Reload Window`（⌘/Ctrl+Shift+P）或退出重开。
 
-```jsonc
-{
-  "mcpServers": {
-    "zmind-mcp-server": {
-      "env": {
-        "ZMIND_API_KEY": "<40 位十六进制>"  // 登录 zmind.whaletv.com → 我的账户 → API 访问密钥
-      }
-    },
-    "opengrok-mcp-server": {
-      "env": {
-        "OPENGROK_USERNAME": "<公司分配账号>",
-        "OPENGROK_PASSWORD": "<对应密码>"
-      }
-    },
-    "knowledge-mcp-server": {
-      "env": {
-        "ZMIND_API_KEY": "<同上>"  // knowledge-mcp 复用 zmind 凭据做 sync_zmind
-      }
-    }
-  }
-}
-```
+5 个 MCP server 用新凭据启动，可在 Kiro 内直接使用所有功能。
 
-完整模板见仓库根的 [`mcp.json`](mcp.json)。
-
-### Step 4：重启 Kiro
-
-让 5 个 MCP server 用新凭据启动。Kiro 重启后在对话中说 `配置` / `setup` 触发 `onboarding` 流程做最终验证。
+完整模板见仓库根的 [`mcp.json`](mcp.json)。重启后在对话中说"配置" / "setup"触发 `onboarding` 流程做最终验证。
 
 ## 凭据管理（v2 关键）
 
@@ -195,11 +176,11 @@ bash scripts/setup-v2.sh
 
 | 系统 | 用户名 | 凭据形式 | 进 mcp.json | 由什么填入 |
 |---|---|---|---|---|
-| **Zmind** | — | API Key（40 位） | ✅ `ZMIND_API_KEY` | 手填一次，永久 |
-| **Gerrit SSO** | `winn.wei`（小写） | SSO 登录密码 | ❌（仅刷新时输入） | `refresh-auth` 抓 cookie 后只存 `GERRIT_AUTH_HEADER + GERRIT_COOKIE` |
-| **Gerrit HTTP Credentials** | `winn.wei` | 应用 Token | ❌（公司部署用不上） | — |
-| **Confluence** | `Winn.Wei`（首字母大写） | 独立密码（不同于 SSO） | ❌（仅刷新时输入） | `refresh-auth` form login 后存 `CONFLUENCE_COOKIE` |
-| **OpenGrok** | `zeasnrd` | 共享只读密码 | ✅ `OPENGROK_USERNAME + PASSWORD` | 手填一次，永久 |
+| **Zmind** | — | API Key（40 位） | ✅ `ZMIND_API_KEY` | `setup-creds.mjs`（setup-v2 自动调），永久 |
+| **Gerrit SSO** | `winn.wei`（小写） | SSO 登录密码 | ✅ `GERRIT_AUTH_HEADER` + `GERRIT_COOKIE` | `refresh-auth.mjs`（setup-v2 自动调）抓 cookie，1-4 周刷新 |
+| **Gerrit HTTP Credentials** | `winn.wei` | 应用 Token | ❌（公司双层认证下用不上） | — |
+| **Confluence** | `Winn.Wei`（首字母大写） | 独立密码（不同于 SSO） | ✅ `CONFLUENCE_COOKIE` | `refresh-auth.mjs` form login 抓 cookie |
+| **OpenGrok** | `zeasnrd` | 共享只读密码 | ✅ `OPENGROK_USERNAME + PASSWORD` | `setup-creds.mjs`（setup-v2 自动调），永久 |
 
 ### Gerrit 双通道认证（v1.1 关键）
 
@@ -306,7 +287,7 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 
 `search_confluence`（CQL 自动包装）/ `get_page`（HTML 转纯文本，截 8000 字）/ `list_spaces`
 
-### Knowledge v1.0.0（12 个）
+### Knowledge v1.0.1（12 个）
 
 **同步**：`sync_zmind` / `sync_gerrit` / `sync_confluence`
 
@@ -332,7 +313,7 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 │  ├── opengrok-mcp-server (v1.2.0, 4 tools)                    │
 │  ├── confluence-mcp-server (v1.0.0, 3 tools)                  │
 │  │     └─ cookie 认证（form login 独立账号）                    │
-│  └── knowledge-mcp-server (v1.0.0, 12 tools)                  │
+│  └── knowledge-mcp-server (v1.0.1, 12 tools)                  │
 │        └─ 三源同步 + 向量+FTS5 + analyze_issue                 │
 │                                                                │
 │  Steering 层（12 份工作流指南）：                                │
@@ -539,7 +520,7 @@ npm publish --access=public        # 用户级 ~/.npmrc 已存 token
 - **Gerrit 双通道认证**（v1.1.0 — 过公司 nginx 双层认证网关）
 - **Zmind RAR5 + WAF 应对**（v2.1.1 — 三档降级解压 + 限速重试）
 - **Confluence MCP**（v1.0.0 — 文档中心检索）
-- **Knowledge MCP**（v1.0.0 — 三源同步 + 向量+FTS5 hybrid 跨源检索 + analyze_issue 端到端工作流 + AOSP 模块级精搜）
+- **Knowledge MCP**（v1.0.1 — 三源同步 + 向量+FTS5 hybrid 跨源检索 + analyze_issue 端到端工作流 + AOSP 模块级精搜；v1.0.1 修复 sync watermark / default query / 增量 scope 三个 bug）
 - **凭据自动刷新**（refresh-auth — Playwright 一键搞定 Gerrit + Confluence cookie）
 - **一键部署**（setup-v2.{ps1,sh}）
 - 5 档代码搜索策略升级

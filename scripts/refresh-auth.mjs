@@ -58,6 +58,10 @@ const GERRIT_SERVER_KEY = process.env.GERRIT_SERVER_KEY?.trim() || "gerrit-mcp-s
 const CONFLUENCE_SERVER_KEY =
   process.env.CONFLUENCE_SERVER_KEY?.trim() || "confluence-mcp-server";
 
+/** Power 命名空间前缀（Kiro Power 安装后的 key 形如 power-<name>-<server>） */
+const POWER_NAME = process.env.WHALE_POWER_NAME?.trim() || "whaletv-dev-power";
+const POWER_KEY_PREFIX = `power-${POWER_NAME}-`;
+
 /** Playwright 启动超时（ms） */
 const PAGE_TIMEOUT_MS = 30_000;
 /** SSO 跳转完成等待超时（ms） */
@@ -286,17 +290,64 @@ async function writeMcpJsonAtomic(cfg) {
 }
 
 /**
- * 把 envPatch 深合并到 cfg.mcpServers[serverKey].env，保留其他字段。
- * 若 serverKey 不存在则创建一个最小 stub。
+ * 在 cfg 的所有可能位置（顶层 mcpServers 和 powers.mcpServers）搜索 server entry。
+ *
+ * Kiro IDE 安装 Power 后，mcp.json 实际可能有以下几种结构：
+ *   1) `mcpServers["gerrit-mcp-server"]`              — 用户手动安装的本地配置
+ *   2) `mcpServers["power-<powername>-gerrit-mcp-server"]` — Kiro Power flat 命名约定
+ *   3) `powers.mcpServers["power-<powername>-gerrit-mcp-server"]` — Kiro Power 嵌套结构
+ *
+ * 本函数返回所有 substring 匹配 baseKey 的位置（路径数组），把同一 envPatch 写到全部，
+ * 这样无论 Kiro 用的是哪种命名约定都能正确认证。
+ *
+ * @returns 实际命中的位置数组（用于日志），形如 ["mcpServers.gerrit-mcp-server", "powers.mcpServers.power-whaletv-dev-power-gerrit-mcp-server"]
  */
-function injectServerEnv(cfg, serverKey, envPatch) {
+function injectServerEnv(cfg, baseKey, envPatch) {
   cfg.mcpServers = cfg.mcpServers || {};
-  cfg.mcpServers[serverKey] = cfg.mcpServers[serverKey] || {};
-  cfg.mcpServers[serverKey].env = {
-    ...(cfg.mcpServers[serverKey].env || {}),
-    ...envPatch,
-  };
-  // 不覆盖既有 disabled / autoApprove / command / args，仅 env 合并
+
+  /**
+   * 扫描某个 mcpServers 字典，找所有以 baseKey 结尾的 key 并合并 envPatch。
+   * 返回命中的 key 数组。
+   */
+  function patchMcpServers(servers, parentLabel) {
+    const matched = [];
+    for (const key of Object.keys(servers)) {
+      // substring match：覆盖 "<base>" 或 "power-<name>-<base>" 或其他前缀
+      if (key === baseKey || key.endsWith(`-${baseKey}`) || key.endsWith(baseKey)) {
+        servers[key] = servers[key] || {};
+        servers[key].env = { ...(servers[key].env || {}), ...envPatch };
+        matched.push(`${parentLabel}.${key}`);
+      }
+    }
+    return matched;
+  }
+
+  const hits = [];
+  hits.push(...patchMcpServers(cfg.mcpServers, "mcpServers"));
+
+  // 嵌套 powers.mcpServers（Kiro Power 可能采用的结构）
+  if (cfg.powers && typeof cfg.powers === "object" && cfg.powers.mcpServers) {
+    hits.push(...patchMcpServers(cfg.powers.mcpServers, "powers.mcpServers"));
+  }
+
+  // 都没找到 → 同时创建本地路径 + Power 路径，覆盖两种安装方式
+  if (hits.length === 0) {
+    const localKey = baseKey;
+    const powerKey = `${POWER_KEY_PREFIX}${baseKey}`;
+    cfg.mcpServers[localKey] = cfg.mcpServers[localKey] || {};
+    cfg.mcpServers[localKey].env = {
+      ...(cfg.mcpServers[localKey].env || {}),
+      ...envPatch,
+    };
+    cfg.mcpServers[powerKey] = cfg.mcpServers[powerKey] || {};
+    cfg.mcpServers[powerKey].env = {
+      ...(cfg.mcpServers[powerKey].env || {}),
+      ...envPatch,
+    };
+    hits.push(`mcpServers.${localKey}`, `mcpServers.${powerKey}`);
+  }
+
+  return hits;
 }
 
 // =============================================================================
@@ -424,15 +475,22 @@ async function main() {
   }
 
   const cfg = await readMcpJson();
-  injectServerEnv(cfg, GERRIT_SERVER_KEY, {
+  const gerritHits = injectServerEnv(cfg, GERRIT_SERVER_KEY, {
     GERRIT_AUTH_HEADER: authHeader,
     GERRIT_COOKIE: gerritCookie,
   });
+  let confluenceHits = [];
   if (confluenceCookie) {
-    injectServerEnv(cfg, CONFLUENCE_SERVER_KEY, {
+    confluenceHits = injectServerEnv(cfg, CONFLUENCE_SERVER_KEY, {
       CONFLUENCE_COOKIE: confluenceCookie,
     });
   }
+  // knowledge-mcp 复用三源凭据（顺手把 Gerrit/Confluence 同步过去）
+  injectServerEnv(cfg, "knowledge-mcp-server", {
+    GERRIT_AUTH_HEADER: authHeader,
+    GERRIT_COOKIE: gerritCookie,
+    ...(confluenceCookie ? { CONFLUENCE_COOKIE: confluenceCookie } : {}),
+  });
 
   try {
     await writeMcpJsonAtomic(cfg);
@@ -446,6 +504,10 @@ async function main() {
 
   process.stderr.write(
     `[refresh-auth] ✓ 完成。已更新 ${MCP_JSON_PATH}\n` +
+      `[refresh-auth]   gerrit 命中位置: ${gerritHits.join(", ")}\n` +
+      (confluenceHits.length
+        ? `[refresh-auth]   confluence 命中位置: ${confluenceHits.join(", ")}\n`
+        : "") +
       (backupPath ? `[refresh-auth]   备份: ${backupPath}\n` : ""),
   );
   process.stderr.write(

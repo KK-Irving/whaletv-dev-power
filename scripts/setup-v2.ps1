@@ -1,18 +1,26 @@
-# setup-v2.ps1 — Windows 一键部署脚本
+# setup-v2.ps1 — Windows 一键部署脚本（v2 onboarding 主入口）
 #
-# 功能：
+# 流程：
 #   1. 检查依赖（Node ≥ 22.5、unar/7z 可选）
 #   2. 安装 Playwright + Chromium（用于 refresh-auth）
-#   3. 提示首次抓取 Gerrit + Confluence 凭据
-#   4. （可选）首批 sync 提示
+#   3. 交互收集 4 套凭据（Zmind API Key / OpenGrok / Gerrit SSO / Confluence）
+#   4. 调 setup-creds.mjs 写 Zmind + OpenGrok
+#   5. 调 refresh-auth.mjs 抓 Gerrit + Confluence cookie
+#   6. 提示重启 Kiro
+#
+# 安全：
+#   - 密码用 SecureString 收集，不回显；脚本结束自动从内存清除
+#   - 凭据通过环境变量传给子脚本，不落盘
 #
 # 用法：
 #   PowerShell -ExecutionPolicy Bypass -File scripts\setup-v2.ps1
+#   PowerShell -ExecutionPolicy Bypass -File scripts\setup-v2.ps1 -SkipPlaywrightInstall
 
 [CmdletBinding()]
 param(
     [switch]$SkipAuthRefresh,
-    [switch]$SkipPlaywrightInstall
+    [switch]$SkipPlaywrightInstall,
+    [switch]$SkipCredsSetup
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,8 +33,21 @@ Write-Host '  whaletv-dev-power v2 setup' -ForegroundColor Cyan
 Write-Host '════════════════════════════════════════════════════════════' -ForegroundColor Cyan
 Write-Host ''
 
+# 帮手：把 SecureString 转明文（仅在子进程 env 用，使用完立即 Clear-Variable）
+function ConvertTo-PlainText {
+    param([SecureString]$Secure)
+    if ($null -eq $Secure) { return '' }
+    $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
+    try {
+        return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+    }
+    finally {
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+}
+
 # ── 1. 依赖检查 ──────────────────────────────────────────────────
-Write-Host '[1/4] 检查系统依赖...' -ForegroundColor Yellow
+Write-Host '[1/5] 检查系统依赖...' -ForegroundColor Yellow
 
 $nodeVersion = $null
 try {
@@ -51,22 +72,19 @@ function Test-CmdAvailable {
     return [bool](Get-Command -Name $Name -ErrorAction SilentlyContinue)
 }
 
-$hasUnar = Test-CmdAvailable 'unar'
-$has7z = Test-CmdAvailable '7z'
-if ($hasUnar) {
+if (Test-CmdAvailable 'unar') {
     Write-Host '  ✓ unar (推荐用于 RAR5 解压)' -ForegroundColor Green
 }
-elseif ($has7z) {
+elseif (Test-CmdAvailable '7z') {
     Write-Host '  ⚠ unar 未安装；7z 可作 fallback。建议: choco install unar' -ForegroundColor Yellow
 }
 else {
-    Write-Host '  ⚠ unar / 7z 都未安装' -ForegroundColor Yellow
-    Write-Host '    建议: choco install unar 7zip （处理 .rar/.7z 附件需要）' -ForegroundColor Yellow
+    Write-Host '  ⚠ unar / 7z 都未安装；建议: choco install unar 7zip' -ForegroundColor Yellow
 }
 
 # ── 2. Playwright + Chromium ─────────────────────────────────────
 Write-Host ''
-Write-Host '[2/4] 安装 scripts/ 依赖（Playwright + Chromium）...' -ForegroundColor Yellow
+Write-Host '[2/5] 安装 scripts/ 依赖（Playwright + Chromium）...' -ForegroundColor Yellow
 
 if ($SkipPlaywrightInstall) {
     Write-Host '  - 跳过（-SkipPlaywrightInstall）' -ForegroundColor Yellow
@@ -75,10 +93,7 @@ else {
     Push-Location $scriptRoot
     try {
         Write-Host '  执行: npm install ...'
-        & node (Join-Path $env:APPDATA 'npm\node_modules\npm\bin\npm-cli.js') install --no-audit --no-fund 2>&1 | Out-Host
-        if ($LASTEXITCODE -ne 0) {
-            & npm install --no-audit --no-fund 2>&1 | Out-Host
-        }
+        & npm install --no-audit --no-fund 2>&1 | Out-Host
         if ($LASTEXITCODE -eq 0) {
             Write-Host '  ✓ Playwright 已安装' -ForegroundColor Green
         }
@@ -95,47 +110,129 @@ else {
     }
 }
 
-# ── 3. 凭据自动刷新 ──────────────────────────────────────────────
+# ── 3. 收集 4 套凭据 ─────────────────────────────────────────────
 Write-Host ''
-Write-Host '[3/4] 凭据配置（refresh-auth）' -ForegroundColor Yellow
+Write-Host '[3/5] 收集凭据（4 套独立账号 — 一次性配置完，永久 + 1-4 周刷 cookie）' -ForegroundColor Yellow
+Write-Host ''
+
+$zmindKey = ''
+$ogUser = ''
+$ogPass = $null
+$gerritUser = ''
+$gerritPass = $null
+$confluenceUser = ''
+$confluencePass = $null
+
+if ($SkipCredsSetup) {
+    Write-Host '  - 跳过（-SkipCredsSetup）' -ForegroundColor Yellow
+}
+else {
+    Write-Host '  ┌─ Zmind' -ForegroundColor Cyan
+    Write-Host '  │  https://zmind.whaletv.com → 我的账户 → API 访问密钥（40 位十六进制）' -ForegroundColor Gray
+    $zmindKey = (Read-Host '  │  ZMIND_API_KEY (留空跳过)').Trim()
+
+    Write-Host ''
+    Write-Host '  ┌─ OpenGrok' -ForegroundColor Cyan
+    Write-Host '  │  公司分配的共享只读账号' -ForegroundColor Gray
+    $ogUser = (Read-Host '  │  OPENGROK_USERNAME (留空跳过)').Trim()
+    if ($ogUser) {
+        $ogPassSecure = Read-Host '  │  OPENGROK_PASSWORD' -AsSecureString
+        $ogPass = ConvertTo-PlainText -Secure $ogPassSecure
+    }
+
+    Write-Host ''
+    Write-Host '  ┌─ Gerrit SSO（用于 refresh-auth 抓 cookie）' -ForegroundColor Cyan
+    Write-Host '  │  全小写用户名（例 winn.wei）+ SSO 密码' -ForegroundColor Gray
+    $gerritUser = (Read-Host '  │  Gerrit 用户名 (留空跳过)').Trim()
+    if ($gerritUser) {
+        $gerritPassSecure = Read-Host '  │  Gerrit 密码' -AsSecureString
+        $gerritPass = ConvertTo-PlainText -Secure $gerritPassSecure
+    }
+
+    Write-Host ''
+    Write-Host '  ┌─ Confluence（独立账号系统，跟 Gerrit SSO 不同）' -ForegroundColor Cyan
+    Write-Host '  │  用户名首字母可能大写（例 Winn.Wei）+ 独立密码' -ForegroundColor Gray
+    $confluenceUser = (Read-Host '  │  Confluence 用户名 (留空跳过)').Trim()
+    if ($confluenceUser) {
+        $confluencePassSecure = Read-Host '  │  Confluence 密码' -AsSecureString
+        $confluencePass = ConvertTo-PlainText -Secure $confluencePassSecure
+    }
+    Write-Host ''
+}
+
+# ── 4. setup-creds.mjs 写 Zmind + OpenGrok ──────────────────────
+Write-Host '[4/5] 写入 Zmind / OpenGrok 凭据到 ~/.kiro/settings/mcp.json...' -ForegroundColor Yellow
+
+if ($SkipCredsSetup) {
+    Write-Host '  - 跳过（-SkipCredsSetup）' -ForegroundColor Yellow
+}
+elseif (-not $zmindKey -and -not $ogUser) {
+    Write-Host '  - Zmind / OpenGrok 凭据均未提供，跳过 setup-creds' -ForegroundColor Yellow
+}
+else {
+    $env:ZMIND_API_KEY = $zmindKey
+    $env:OPENGROK_USERNAME = $ogUser
+    $env:OPENGROK_PASSWORD = $ogPass
+    try {
+        & node (Join-Path $scriptRoot 'setup-creds.mjs')
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ✗ setup-creds 退出码 $LASTEXITCODE" -ForegroundColor Red
+        }
+    }
+    finally {
+        $env:ZMIND_API_KEY = $null
+        $env:OPENGROK_USERNAME = $null
+        $env:OPENGROK_PASSWORD = $null
+    }
+}
+
+# ── 5. refresh-auth.mjs 抓 Gerrit + Confluence cookie ───────────
+Write-Host ''
+Write-Host '[5/5] 抓 Gerrit + Confluence cookie...' -ForegroundColor Yellow
 
 if ($SkipAuthRefresh) {
     Write-Host '  - 跳过（-SkipAuthRefresh）；记得后续手动跑 scripts\refresh-auth.ps1' -ForegroundColor Yellow
 }
+elseif (-not $gerritUser) {
+    Write-Host '  - Gerrit 凭据未提供，跳过 refresh-auth' -ForegroundColor Yellow
+    Write-Host '    后续手动跑：scripts\refresh-auth.ps1' -ForegroundColor Gray
+}
 else {
-    $answer = Read-Host '现在跑 refresh-auth 抓取 Gerrit + Confluence cookie 吗？(Y/n)'
-    if ($answer -ne 'n' -and $answer -ne 'N') {
-        & PowerShell -ExecutionPolicy Bypass -File (Join-Path $scriptRoot 'refresh-auth.ps1') -NoSelfInstall
+    $env:WHALE_USER = $gerritUser
+    $env:WHALE_PASSWORD = $gerritPass
+    if ($confluenceUser) {
+        $env:CONFLUENCE_USER = $confluenceUser
+        $env:CONFLUENCE_PASSWORD = $confluencePass
+    }
+    try {
+        & node (Join-Path $scriptRoot 'refresh-auth.mjs')
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "  ✗ refresh-auth 失败 (exit $LASTEXITCODE)。可稍后手动跑：scripts\refresh-auth.ps1" -ForegroundColor Yellow
+            Write-Host "  ✗ refresh-auth 退出码 $LASTEXITCODE" -ForegroundColor Red
+            Write-Host '    可稍后手动跑：scripts\refresh-auth.ps1' -ForegroundColor Gray
         }
     }
-    else {
-        Write-Host '  - 跳过；记得后续手动跑 scripts\refresh-auth.ps1' -ForegroundColor Yellow
+    finally {
+        $env:WHALE_USER = $null
+        $env:WHALE_PASSWORD = $null
+        $env:CONFLUENCE_USER = $null
+        $env:CONFLUENCE_PASSWORD = $null
     }
 }
 
-# ── 4. 提示 ZMIND_API_KEY / OPENGROK 凭据 ────────────────────────
-Write-Host ''
-Write-Host '[4/4] 还需手动配置以下凭据到 ~/.kiro/settings/mcp.json：' -ForegroundColor Yellow
-Write-Host ''
-Write-Host '  [zmind-mcp-server]' -ForegroundColor White
-Write-Host '    ZMIND_API_KEY      = (登录 zmind.whaletv.com → 我的账户 → API 访问密钥)' -ForegroundColor Gray
-Write-Host ''
-Write-Host '  [opengrok-mcp-server]' -ForegroundColor White
-Write-Host '    OPENGROK_USERNAME  = (公司分配的 OpenGrok 账号)' -ForegroundColor Gray
-Write-Host '    OPENGROK_PASSWORD  = (对应密码)' -ForegroundColor Gray
-Write-Host ''
-Write-Host '  [knowledge-mcp-server] 复用上面凭据；首次跑 sync_zmind/sync_gerrit 后' -ForegroundColor White
-Write-Host '  自动下载 BGE-small-zh ONNX 模型到 ./data/models/（~80MB，1-3 分钟）' -ForegroundColor Gray
-Write-Host ''
+# 清明文密码
+if ($ogPass) { $ogPass = $null }
+if ($gerritPass) { $gerritPass = $null }
+if ($confluencePass) { $confluencePass = $null }
+[System.GC]::Collect()
 
+Write-Host ''
 Write-Host '════════════════════════════════════════════════════════════' -ForegroundColor Cyan
 Write-Host '  setup-v2 完成。重启 Kiro 让新凭据生效。' -ForegroundColor Green
 Write-Host '════════════════════════════════════════════════════════════' -ForegroundColor Cyan
 Write-Host ''
 Write-Host '后续命令：' -ForegroundColor White
-Write-Host '  • cookie 过期 → scripts\refresh-auth.ps1' -ForegroundColor Gray
+Write-Host '  • cookie 过期（401） → scripts\refresh-auth.ps1' -ForegroundColor Gray
+Write-Host '  • 更新 Zmind/OpenGrok 凭据 → 重跑 scripts\setup-v2.ps1（仅填要改的）' -ForegroundColor Gray
 Write-Host '  • 首次同步知识库 → 在 Kiro 内说："用 sync_zmind 拉 1000 条；用 embed_pending 处理 zmind"' -ForegroundColor Gray
 Write-Host '  • 一键 PR/Bug 分析 → "用 analyze_issue 分析 #<ID>"' -ForegroundColor Gray
 Write-Host ''
