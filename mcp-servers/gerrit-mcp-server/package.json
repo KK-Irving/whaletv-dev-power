@@ -1,7 +1,7 @@
 {
   "name": "@kk-irving/gerrit-mcp-server",
-  "version": "1.1.0",
-  "description": "Gerrit MCP Server for WhaleTV Developer Power (REST API; 14 tools; v1.1 dual-channel auth: session cookie + nginx Basic, or HTTP Credentials direct)",
+  "version": "1.1.1",
+  "description": "Gerrit MCP Server for WhaleTV Developer Power (REST API; 14 tools; v1.1 dual-channel auth: session cookie + nginx Basic, or HTTP Credentials direct; v1.1.1 adds sot-loader for v3 SoT (~/.ai/whaletv.yaml) with env-priority fallback)",
   "type": "module",
   "bin": {
     "gerrit-mcp-server": "dist/index.js"

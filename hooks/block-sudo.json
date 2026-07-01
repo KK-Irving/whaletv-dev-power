@@ -1,0 +1,13 @@
+{
+  "name": "Block Sudo",
+  "version": "1.0.0",
+  "description": "拦截 sudo 命令，避免不必要的权限提升",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": ["shell"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "检查即将执行的命令：如果命令包含 sudo，你必须立即停止。开发操作不需要 root 权限，使用 sudo 通常意味着操作方向有误。\n\n如果检测到 sudo：\n1. 向用户明确说明为什么这个操作被拦截（安全策略禁止未经确认的权限提升）\n2. 建议替代方案：使用当前用户权限执行，或让用户自行在终端里跑\n3. 只有用户明确说'允许使用 sudo'时才能继续\n\n如果没有检测到 sudo：直接放行。"
+  }
+}

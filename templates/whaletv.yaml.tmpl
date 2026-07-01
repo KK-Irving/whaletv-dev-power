@@ -1,0 +1,54 @@
+# whaletv-dev-power 单一凭据源（Single Source of Truth）
+#
+# 位置：~/.ai/whaletv.yaml
+# 权限：0600（Linux/macOS 由 CLI 自动 chmod；Windows 依赖 NTFS 用户 ACL）
+# 读取方式：`whaletv-credentials get <key>`
+#
+# 该文件由以下工具自动写入：
+#   - scripts/setup-creds.mjs      # 首次配置
+#   - scripts/refresh-auth.mjs     # Playwright 抓 cookie
+#   - scripts/whaletv-credentials.mjs set <key> <value>
+#
+# 也可手动编辑（务必保证 YAML 语法正确；chmod 0600 by yourself on Unix）。
+
+# ---- Zmind (Redmine) ----
+zmind:
+  api_key: <YOUR_ZMIND_API_KEY>       # 40 位十六进制（Zmind > 我的账户 > API 访问密钥）
+  url: https://zmind.whaletv.com
+
+# ---- OpenGrok ----
+opengrok:
+  username: <YOUR_OPENGROK_USERNAME>  # 共享只读账号
+  password: <YOUR_OPENGROK_PASSWORD>
+  url: https://opengrok.zeasn.com
+  project: <可选默认项目>              # 如 d4_code
+
+# ---- Gerrit ----
+# 模式 A（推荐）: session 凭据，过公司 nginx 双层认证
+# 模式 B（备用）: HTTP Basic，直连 Gerrit
+gerrit:
+  auth_header: "Basic <base64>"       # SSO 用户名:密码 的 base64
+  cookie: "GerritAccount=...; XSRF_TOKEN=..."
+  username: ""                        # 模式 B 用
+  http_password: ""                   # 模式 B 用（Gerrit Settings > HTTP Credentials 生成）
+  url: https://whale-gerrit.zeasn.com
+
+# ---- Confluence（独立账号，跟 SSO 是两套系统）----
+confluence:
+  username: <YOUR_CONFLUENCE_USERNAME>  # 首字母可能大写
+  password: <YOUR_CONFLUENCE_PASSWORD>  # 独立密码
+  cookie: "JSESSIONID=...; seraph.confluence=..."
+  base_url: https://docs.whaletv.com
+
+# ---- S3（可选，供 knowledge-mcp 的 upload_report 使用）----
+s3_issue_analysis:
+  access_key_id: <YOUR_AWS_ACCESS_KEY_ID>
+  secret_access_key: <YOUR_AWS_SECRET_ACCESS_KEY>
+  region: <YOUR_AWS_REGION>            # 如 ap-southeast-1
+  bucket: <YOUR_S3_BUCKET>
+
+# ---- 元数据 ----
+_meta:
+  email: <YOUR_WORK_EMAIL>             # 供 Zmind Hub 未来做 rate-limit 归因
+  updated_at: <ISO-8601>               # 由 CLI 自动写入
+  version: 1

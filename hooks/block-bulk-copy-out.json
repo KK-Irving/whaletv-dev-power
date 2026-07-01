@@ -1,0 +1,13 @@
+{
+  "name": "Block Bulk Copy out/prebuilts",
+  "version": "1.0.0",
+  "description": "拦截对 out/ 和 prebuilts/ 目录的批量复制/同步操作",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": ["shell"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "检查即将执行的命令：如果命令是 rsync 或 cp -r 且源路径或目标路径包含 out/ 或 prebuilts/，你必须立即停止。\n\n为什么拦截：\n- out/ 通常 50GB+，prebuilts/ 通常 30GB+\n- 批量复制会消耗大量磁盘空间和时间（几十分钟到几小时）\n- 常见误用：把整个 out/ 复制到备份盘、把 prebuilts/ 复制到共享目录\n\n如果检测到 out/ 或 prebuilts/ 的批量复制：\n1. 说明为什么拦截\n2. 询问用户真实意图：\n   - 要备份编译产物？只 copy `out/target/product/<name>/*.img` 或 `*.zip` 即可\n   - 要提供给别人编译？让对方自己跑 repo sync + build，不要传 prebuilts/\n   - 要清理磁盘？用 `rm -rf out/` 或 `mma clean` 而不是 cp\n3. 帮用户构造精确的目标子目录路径后再执行\n\n只有用户明确说'我确定要这样做'且解释了理由，才能放行。"
+  }
+}

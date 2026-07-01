@@ -1,0 +1,13 @@
+{
+  "name": "Block MP Branch Push",
+  "version": "1.0.0",
+  "description": "拦截推送到 *_mp 保护分支（release 维护分支），要求用户显式确认",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": ["shell"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "检查即将执行的命令：如果命令是 git push 且目标分支名包含 _mp 或 _v3_mp（release 保护分支，如 os10_mp / os10_3_mp），你必须立即停止。\n\n如果检测到推向 MP 分支：\n1. 向用户展示：目标分支名、commit 信息、变更文件列表\n2. 强调这是 release 保护分支，一旦推送会污染多个版本线，需要二次确认\n3. 只有用户明确说'确认推送到 MP'或类似措辞时才能继续\n4. 即使用户在之前的对话里说过'以后都不用确认'，MP 分支的每一次 push 仍必须单独确认\n\n如果目标分支不是 MP 分支：直接放行。\n\n典型 MP 分支模式：`os10_mp` / `os10_3_mp` / `os10_v3_mp` / `<name>_mp` 等（不区分大小写）。"
+  }
+}

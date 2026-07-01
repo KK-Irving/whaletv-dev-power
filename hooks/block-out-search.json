@@ -1,0 +1,13 @@
+{
+  "name": "Block Build Output Search",
+  "version": "1.0.0",
+  "description": "拦截对 out/ 和 prebuilts/ 目录的搜索操作，避免严重性能问题",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": ["shell"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "检查即将执行的命令：如果命令是 find / grep / rg / ag / ls -R 且搜索路径包含 out/ 或 prebuilts/，你必须立即停止。\n\n为什么拦截：\n- out/ 是 AOSP 编译输出目录，通常 50GB+（源码在这里只是编译时的拷贝，非权威版本）\n- prebuilts/ 是预编译工具链目录，通常 30GB+（GCC / Clang / SDK）\n- 全量搜索会导致数十秒到分钟级卡顿，且几乎不会命中业务代码\n\n如果检测到 out/ 或 prebuilts/ 搜索：\n1. 说明为什么拦截\n2. 推荐替代：使用 `git grep -n \"keyword\"` 搜索源码（自动排除这些未跟踪目录）\n3. 如果用户是为了看编译产物（如 apk 文件），指导用 `find out/ -name '*.apk' -type f` 这种精确路径查找而非内容搜索\n\n允许的例外：\n- `ls out/target/product/` 查看 lunch target 目录名\n- `find out/ -name \"xxx.apk\" -type f` 精确文件名查找\n- 编译系统自身读写 out/ 的命令（如 mm / m）"
+  }
+}

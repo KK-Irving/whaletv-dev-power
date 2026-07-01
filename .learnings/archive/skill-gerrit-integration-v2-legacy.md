@@ -1,0 +1,188 @@
+---
+archived_at: 2026-07-01T08:26:30.633Z
+archived_reason: v3 起统一用 gerrit-mcp-server（14 工具） + skill whaletv-gerrit；本文件已明确标记 Deprecated
+original_path: .kiro/skills/gerrit-integration.md
+---
+
+---
+inclusion: auto
+---
+
+# Skill: Gerrit 集成 ⚠️ Deprecated（2026-06）
+
+> ## ⚠️ 本 Skill 已不是首选 Gerrit 通道
+>
+> 自 2026-06 起，与 Gerrit 的所有交互（查询 / cherry-pick / push / 评论 / reviewer）首选使用
+> **`gerrit-mcp-server`**（12 个 MCP 工具，详见 `POWER.md` 与 `steering/gerrit-workflow.md`）。
+>
+> | 旧（本 Skill 描述） | 新（gerrit-mcp-server 工具） |
+> |---|---|
+> | `ssh -p 29418 ... gerrit query "#<id>"` | `search_changes(query: "Zmind#<id>")` 或 `query_change(change_id)` |
+> | `ssh -p 29418 ... gerrit version`（连接验证） | `curl -u "$GERRIT_USERNAME:$GERRIT_HTTP_PASSWORD" "$GERRIT_URL/a/accounts/self"` |
+> | `gerritpush` | `push_to_gerrit(cwd, target_branch, reviewers?, wip?, topic?)` |
+> | 手工浏览器查 Gerrit Change 评论 | `get_change_comments(change_id)`（按时间升序） |
+> | 手工查 cherry-pick 历史 / 手动 cherry-pick | `cherry_pick_change(change_id, destination_branch)` 返回 `manual_required` + Web URL（高风险操作不自动执行，由 Developer 在 Web UI 完成） |
+>
+> **本 Skill 仅在以下兜底场景仍有参考价值**：
+> - `gerrit-mcp-server` 暂未在你的环境启用 / 配置不完整
+> - 排查 MCP 工具异常时需要直连 Gerrit SSH 做 sanity check
+> - 写脚本批量操作时不便走 stdio MCP 协议
+>
+> **以下原内容保留为历史参考**，新流程请加载 `gerrit-workflow` / `pr-cr-workflow` / `cherry-pick-workflow` / `commit-message-workflow` 四份 steering。
+
+---
+
+# Skill: Gerrit 集成（历史 SSH 通道，仅作 fallback 参考）
+
+## 目的
+
+通过 SSH 与 WhaleTV Gerrit 系统交互，实现提交记录查询、状态检查等操作。
+
+## Gerrit 服务信息
+
+- **地址**: https://whale-gerrit.zeasn.com/
+- **SSH 端口**: 29418
+- **版本**: Gerrit 3.6.0
+- **查询方式**: SSH（`ssh -p 29418 <用户名>@whale-gerrit.zeasn.com gerrit query ...`）
+
+## 用户需提供的配置
+
+| 配置项 | UI 显示 | 说明 |
+|--------|---------|------|
+| Gerrit 用户名 | 用户名 | 登录 Gerrit 的用户名 |
+| Gerrit HTTP 密码 | 密码 | Settings → HTTP Credentials → Generate Password（用于 REST API 写操作） |
+
+> SSH 查询依赖用户名 + SSH 密钥（需已上传到 Gerrit Settings → SSH Keys）
+> HTTP 密码用于 Cherry-Pick、评论等写操作
+> 两者在 onboarding 阶段一次性收集完毕
+
+## 连接验证
+
+```bash
+ssh -p 29418 <用户名>@whale-gerrit.zeasn.com gerrit version
+# 预期返回: gerrit version 3.6.0
+```
+
+## 查询提交记录（核心功能）
+
+### 按 Issue ID 查询
+
+```bash
+ssh -p 29418 <用户名>@whale-gerrit.zeasn.com gerrit query "#<issue_id>" --format=JSON
+```
+
+### 返回数据结构
+
+每行一个 JSON 对象，最后一行是统计信息（含 `"type":"stats"` 字段，需过滤）。
+
+有效记录字段：
+
+```json
+{
+  "project": "public_antv_t/platform/frameworks/base",
+  "branch": "cvte_os10_master",
+  "id": "Ib5c79649f9591b8f53794840327dba625dba962a",
+  "number": 107014,
+  "subject": "[10.2.15][feature][whaletv][Zmind#332669]Add Egyptian Arabic translations",
+  "status": "MERGED",
+  "url": "http://whale-gerrit.zeasn.com/c/public_antv_t/platform/frameworks/base/+/107014",
+  "owner": {
+    "email": "clement.ren@zeasn.com",
+    "username": "clement.ren"
+  },
+  "commitMessage": "[10.2.15][feature][whaletv][Zmind#332669]...\n\n[what]...\n[why]...\n[how]...\n[test]...\n[impact]...",
+  "createdOn": 1774331433,
+  "lastUpdated": 1774332273,
+  "open": false,
+  "cherryPickOfChange": 107041,
+  "cherryPickOfPatchSet": 1
+}
+```
+
+### 统计信息（最后一行，需过滤）
+
+```json
+{"type":"stats","rowCount":131,"runTimeMilliseconds":6943,"moreChanges":false}
+```
+
+### 数据处理规则
+
+1. 逐行解析 JSON
+2. 过滤掉含 `"type":"stats"` 的行
+3. 过滤掉缺少 `project`、`branch`、`id`、`status` 字段的无效记录
+4. 按 `project` 分组展示
+5. `status` 可能的值：`MERGED`、`NEW`、`ABANDONED`
+6. 如果 `subject` 包含 "Revert"（不区分大小写），标注为 REVERT
+7. `createdOn` 和 `lastUpdated` 是 Unix 时间戳，需转换为可读日期
+
+## 结果展示格式
+
+### 单条记录
+
+```
+项目: public_antv_t/platform/frameworks/base
+分支: cvte_os10_master
+标题: [10.2.15][feature][whaletv][Zmind#332669]Add Egyptian Arabic translations
+状态: MERGED
+提交人: clement.ren
+链接: http://whale-gerrit.zeasn.com/c/public_antv_t/platform/frameworks/base/+/107014
+时间: 2026-05-21 15:31
+```
+
+### 多条记录（按项目分组）
+
+```
+📋 Gerrit 提交记录（共 X 条）
+
+Project: public_antv_t/platform/frameworks/base
+  ✅ [MERGED] Add Egyptian Arabic translations — cvte_os10_master
+  ✅ [MERGED] Add Egyptian Arabic translations — topt_os10_master
+  ✅ [MERGED] Add Egyptian Arabic translations — hikeen_os10_master
+
+Project: android_apps/whale_os_app/whaleos10/language-overlay
+  ✅ [MERGED] TV FRESH Overlay Translation Update — os10_dev
+  ✅ [MERGED] TV LEVON Overlay Translation Update — os10_master
+```
+
+## Gerrit Change 链接格式
+
+```
+http://whale-gerrit.zeasn.com/c/<project>/+/<change_number>
+```
+
+## Gerrit 浏览器查询链接
+
+按 Issue ID 查询所有相关 Change：
+```
+https://whale-gerrit.zeasn.com/q/%2523<issue_id>
+```
+
+## 本地推送命令
+
+> ⚠️ **新流程优先使用 MCP 工具 `push_to_gerrit`**（详见 `gerrit-workflow.md` / `pr-cr-workflow.md`）。
+> 以下命令仅作为 MCP 工具不可用时的 fallback 参考。
+
+```bash
+# fallback 1：手动 git push（与 push_to_gerrit 内部行为等价）
+git push origin HEAD:refs/for/<branch_name>
+
+# fallback 2：携带 reviewer 与 topic
+git push origin HEAD:refs/for/<branch_name>%r=alice@example.com,r=bob@example.com,topic=<topic>
+```
+
+> 历史命令 `gerritpush`（外部 shell wrapper）已废弃，**不要在新流程中使用**。
+
+## 与 Zmind 的关联
+
+- Commit Message 中包含 `Zmind#<issue_id>` 用于关联
+- 查询时使用 `#<issue_id>` 作为搜索关键词
+- Cherry-Pick 完成后需要在 Zmind Issue 中添加 CP 结果评论
+- `cherryPickOfChange` 字段标识该提交是从哪个 Change cherry-pick 来的
+
+## 关键约束
+
+- 所有 push 操作必须经过用户确认
+- MP 分支（`*_mp`）的 push 需要额外确认
+- Gerrit API 调用失败时停止后续操作，等待用户指示
+- 不要在输出中暴露密码
+- SSH 查询需要确保用户的 SSH 密钥已上传到 Gerrit

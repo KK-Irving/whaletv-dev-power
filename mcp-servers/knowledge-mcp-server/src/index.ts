@@ -24,6 +24,10 @@
  *   - Confluence: CONFLUENCE_BASE_URL + CONFLUENCE_COOKIE
  */
 
+// v3: 先加载 SoT（~/.ai/whaletv.yaml）到 process.env，再读取 env（env 已存在则不覆盖）
+// 注意：必须在 config.ts / sources/* import 之前完成，因为它们在 module load 时读 env
+import "./sot-loader.js";
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -40,8 +44,17 @@ import { searchAosp } from "./aosp/search.js";
 import { embedAospPending } from "./aosp/embed-aosp.js";
 import { listModulesOfPlatform, loadModuleMap } from "./aosp/module-map-loader.js";
 import { analyzeIssue } from "./analyze-issue.js";
+import { generateReport } from "./tools/generate-report.js";
+import { uploadReport } from "./tools/upload-report.js";
+import {
+  SCENARIO_VALUES,
+  PHASE_STATUS_VALUES,
+  FINAL_STATUS_VALUES,
+  SYMPTOM_TYPES,
+  ROOT_CAUSE_CATEGORIES,
+} from "./tools/report-schema.js";
 
-const server = new McpServer({ name: "knowledge-mcp-server", version: "1.0.2" });
+const server = new McpServer({ name: "knowledge-mcp-server", version: "1.1.0" });
 
 // =============================================================================
 // 错误统一包装
@@ -239,6 +252,102 @@ function wrap(handler: () => Promise<unknown>) {
 );
 
 // =============================================================================
+// P2: generate_report / upload_report — Skill 执行报告治理
+// =============================================================================
+
+(server.tool as any)(
+  "generate_report",
+  "生成 Skill 执行报告（Report Fact v1）：接收结构化 phases + business_summary，落盘 JSON + 自包含 HTML 到 <output_dir>/{task_identifier}/{report_id}-report-fact-v1.json 与 .html。symptom_type 和 root_cause_category 用枚举保证治理归因一致。",
+  {
+    scenario: z.enum(SCENARIO_VALUES).describe("报告场景枚举"),
+    task_identifier: z.string().min(1).describe("任务对象标识（如 PR337540）"),
+    skill_name: z.string().min(1).describe("执行的 skill 名（如 whaletv-bug-analysis）"),
+    business_summary: z
+      .object({
+        title: z.string(),
+        conclusion: z.string(),
+        details: z.record(z.any()).optional().default({}),
+        risks: z
+          .array(
+            z.object({
+              level: z.enum(["low", "medium", "high", "critical"]),
+              description: z.string(),
+              mitigation: z.string().optional(),
+            }),
+          )
+          .optional(),
+      })
+      .describe("业务总结（含 issue_status / symptom_type / root_cause_category 等治理字段可放到 details）"),
+    phases: z
+      .array(
+        z.object({
+          phase_id: z.string(),
+          name: z.string(),
+          status: z.enum(PHASE_STATUS_VALUES),
+          summary: z.string(),
+          outputs: z.record(z.any()).optional(),
+          gate: z
+            .object({ waiting_for: z.string(), passed: z.boolean().optional() })
+            .optional(),
+          rules_hit: z.array(z.string()).optional(),
+          tools: z
+            .array(
+              z.object({
+                name: z.string(),
+                call_count: z.number().int().optional(),
+                success: z.boolean().optional(),
+              }),
+            )
+            .optional(),
+          knowledge_used: z.array(z.string()).optional(),
+          risks: z.array(z.string()).optional(),
+        }),
+      )
+      .describe("执行阶段列表（按顺序）"),
+    artifacts: z
+      .array(
+        z.object({
+          type: z.string(),
+          value: z.string(),
+          label: z.string().optional(),
+          metadata: z.record(z.any()).optional(),
+        }),
+      )
+      .optional()
+      .describe("(可选) 关联产出物（gerrit URL / commit hash / 附件路径）"),
+    final_status: z.enum(FINAL_STATUS_VALUES).optional().describe("(可选) 最终状态，不传则从 phases 推断"),
+    hook_metrics: z
+      .object({
+        hooks_triggered: z.number().int().optional(),
+        hooks_blocked: z.number().int().optional(),
+        hook_names: z.array(z.string()).optional(),
+      })
+      .optional(),
+    output_dir: z.string().optional().describe("(可选) 输出目录，默认 <cwd>/report-output/"),
+    started_at: z.string().optional().describe("(可选) 执行开始时间 ISO-8601"),
+  },
+  (args: any) => wrap(() => generateReport(args))(),
+);
+
+(server.tool as any)(
+  "upload_report",
+  "把 generate_report 产出的 HTML 报告上传到 S3，按 ISO 周分目录：s3://{bucket}/issueAnalysis/{year}/w{week}/{report_id}-report-v1.html。S3 凭据从 SoT 的 s3_issue_analysis 段读取。",
+  {
+    html_path: z.string().min(1).describe("本地 HTML 报告绝对路径（generate_report 输出的 html_path）"),
+    report_id: z.string().min(1).describe("报告 ID"),
+    year: z.number().int().optional().describe("(可选) 覆盖 ISO 年"),
+    week: z.number().int().min(1).max(53).optional().describe("(可选) 覆盖 ISO 周"),
+    bucket_override: z.string().optional().describe("(可选) 覆盖 bucket（默认从 SoT 读）"),
+  },
+  ({ html_path, report_id, year, week, bucket_override }: any) =>
+    wrap(() => uploadReport({ html_path, report_id, year, week, bucket_override }))(),
+);
+
+// 引用治理枚举变量（防止 tsc 报未使用警告；同时给 IDE 快速跳转）
+const _reportEnumSanity: unknown = { SYMPTOM_TYPES, ROOT_CAUSE_CATEGORIES };
+void _reportEnumSanity;
+
+// =============================================================================
 // 启动
 // =============================================================================
 
@@ -254,7 +363,7 @@ async function main() {
   }
 
   console.error(
-    `[knowledge-mcp-server v1.0.2] started — db=${config.dbPath}, model=${config.embeddingModelId} (dim=${config.embeddingDim}, threads=${config.embeddingThreads})`,
+    `[knowledge-mcp-server v1.1.0] started — db=${config.dbPath}, model=${config.embeddingModelId} (dim=${config.embeddingDim}, threads=${config.embeddingThreads}); v1.1 adds generate_report / upload_report`,
   );
 }
 

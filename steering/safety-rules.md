@@ -76,50 +76,30 @@ Steering 文件中定义的 AI 行为边界。AI 必须在执行前自行判断�
 
 ## 第二层：Hook 拦截
 
-Hook 配置文件 `hooks/safety-hooks.json` 定义命令匹配模式和拦截动作。当 AI 尝试执行的命令匹配拦截模式时，系统自动阻止执行并显示替代方案。
+v3 起 hook 定义遵循 Kiro 官方 schema——每个 hook 是一个独立的 JSON 文件（`hooks/*.json`），Kiro 加载后在匹配的事件发生时自动向 AI 发送 prompt，AI 依据 prompt 内容判断是否拦截并给出替代方案。
 
-### 拦截规则清单
+**注意**：v2 版本的 `hooks/safety-hooks.json`（自定义 schema）实际上没被 Kiro 加载。v3 修复后所有 hook 都会正常生效。原文件归档在 `.learnings/archive/safety-hooks-v2-legacy.json` 供历史参考。
 
-| ID | 规则名称 | 匹配模式 | 拦截原因 | 推荐替代 |
-|----|---------|---------|---------|---------|
-| `block-sudo` | 禁止 sudo 命令 | `^sudo\s` | 安全策略禁止执行 sudo 命令，避免权限提升风险 | 使用当前用户权限执行操作 |
-| `block-root-search` | 禁止根目录/家目录搜索 | `(find\|grep)\s+(/\|~/)` | 禁止在根目录（/）或家目录（~）执行大范围搜索，避免性能问题 | 指定具体的源码子目录进行搜索 |
-| `block-tmp-write` | 禁止写入 /tmp | `>\s*/tmp/\|>>/tmp/` | 禁止写入 /tmp 路径，避免临时文件丢失或权限冲突 | 使用 ~/tmp 目录替代 /tmp |
-| `block-out-search` | 禁止搜索编译输出目录 | `(find\|grep\|ls\s+-R)\s+.*(out/\|prebuilts/)` | out/ 和 prebuilts/ 目录体积巨大（数十 GB），搜索会导致严重性能问题 | 使用 `git grep` 搜索源码，或指定具体的 src 子目录 |
-| `block-git-add-all` | 禁止 git add 全量暂存 | `git\s+add\s+(-A\|--all\|\.\|\*)` | 禁止全量暂存，避免将无关变更混入提交 | 使用 `git add -p` 进行 hunk 级别的精确暂存 |
-| `block-bulk-copy-out` | 禁止大范围复制/同步编译输出目录 | `(rsync\|cp\s+-r)\s+.*(out/\|prebuilts/)` | out/ 和 prebuilts/ 目录体积巨大，批量复制会导致磁盘和性能问题 | 指定具体的目标子目录进行操作 |
+### 拦截规则清单（v3）
 
-### 各规则说明
+| Hook 文件 | 拦截场景 | AI 响应 | 推荐替代 |
+|-----------|---------|---------|---------|
+| `hooks/block-sudo.json` | 命令包含 `sudo` | 停止执行，说明安全策略禁止未经确认的权限提升 | 使用当前用户权限；如需 sudo 让用户自行在终端跑 |
+| `hooks/block-mp-push.json` | `git push` 到 `*_mp` / `*_v3_mp` 保护分支 | 停止执行，展示 commit 信息 + 目标分支，要求二次确认 | 每次 MP push 都必须单独确认，即使已有历史授权 |
+| `hooks/block-root-search.json` | `find/grep/rg/ag` 搜索 `/` 或 `~/` | 停止执行，说明性能问题 | `git grep -n "keyword" -- "*.java"` 在 git 仓库根目录跑，~0.4s 完成 |
+| `hooks/block-tmp-write.json` | 通过 `>` / `>>` 重定向写入 `/tmp/` | 停止执行，说明 `/tmp` 可能被系统清理 | 使用 `~/tmp` 目录 |
+| `hooks/block-out-search.json` | `find/grep/rg/ls -R` 搜索 `out/` 或 `prebuilts/` | 停止执行，说明大目录性能问题 | `git grep` 自动排除；查看编译产物用 `find out/ -name '*.apk'` 精确路径 |
+| `hooks/block-git-add-all.json` | `git add .` / `-A` / `--all` / `*` | 停止执行，说明可能混入无关变更 | `git add -p` 逐 hunk 选择 |
+| `hooks/block-bulk-copy-out.json` | `rsync` / `cp -r` 批量复制 `out/` / `prebuilts/` | 停止执行，说明大目录复制耗时耗盘 | 只 copy `out/target/product/<name>/*.img` 等具体产物 |
 
-**block-sudo**：
-- 禁止以 `sudo` 开头的任何命令
-- 开发操作不需要 root 权限，使用 sudo 通常意味着操作方向有误
-- 替代方案：使用当前用户权限操作，如需特殊权限请用户自行处理
+### Hook 与 Steering 的对应关系
 
-**block-root-search**：
-- 禁止在根目录（`/`）或家目录（`~/`）执行 `find` 或 `grep` 命令
-- 这些目录包含大量文件，搜索会消耗大量时间和系统资源
-- 替代方案：指定具体的源码子目录，如 `git grep -n "keyword" -- "*.java"`
+三层防护体系里，**同一条约束会同时出现在 steering 规则（本文件）和 hook 中**，二者互补：
 
-**block-tmp-write**：
-- 禁止使用重定向（`>` 或 `>>`）写入 `/tmp/` 路径
-- `/tmp` 目录可能被系统清理，且多用户环境下存在权限冲突风险
-- 替代方案：使用 `~/tmp` 目录，确保文件安全且权限可控
+- **Steering 规则**（第一层）：AI 在生成命令前自主判断，主动避免违规操作
+- **Hook 拦截**（第二层）：AI 已经决定执行命令时，Kiro 触发 hook，AI 依据 prompt 二次确认
 
-**block-out-search**：
-- 禁止对 `out/` 或 `prebuilts/` 目录执行 `find`、`grep` 或 `ls -R` 命令
-- `out/` 是编译输出目录（通常 50GB+），`prebuilts/` 是预编译工具链目录（通常 30GB+）
-- 替代方案：使用 `git grep` 搜索源码（自动排除这些目录），或指定具体的源码子目录
-
-**block-git-add-all**：
-- 禁止使用 `git add .`、`git add -A`、`git add --all`、`git add *` 等全量暂存命令
-- 全量暂存可能将无关变更（调试代码、临时修改、其他 Issue 的改动）混入提交
-- 替代方案：使用 `git add -p` 逐 hunk 选择要暂存的变更
-
-**block-bulk-copy-out**：
-- 禁止对 `out/` 或 `prebuilts/` 目录执行 `rsync` 或 `cp -r` 命令
-- 这些目录体积巨大，批量复制会消耗大量磁盘空间和时间
-- 替代方案：指定具体的目标子目录进行操作
+Hook 使用 `askAgent` 类型让 AI 判断，比 regex 硬拦更灵活（能识别用户明确授权的场景、能给具体的替代方案）。
 
 ---
 

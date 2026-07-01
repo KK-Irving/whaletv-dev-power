@@ -1,10 +1,11 @@
 {
   "name": "@kk-irving/opengrok-mcp-server",
-  "version": "1.2.0",
-  "description": "OpenGrok Code Search MCP Server for WhaleTV Developer Power",
+  "version": "1.2.1",
+  "description": "OpenGrok Code Search MCP Server for WhaleTV Developer Power; v1.2.1 fixes bin path (removed leading ./ that npm 7+ strips) and adds sot-loader for v3 SoT (~/.ai/whaletv.yaml) with env-priority fallback",
   "type": "module",
+  "main": "./dist/index.js",
   "bin": {
-    "opengrok-mcp-server": "./dist/index.js"
+    "opengrok-mcp-server": "dist/index.js"
   },
   "files": [
     "dist"

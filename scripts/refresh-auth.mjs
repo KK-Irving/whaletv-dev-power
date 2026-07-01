@@ -35,6 +35,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { readSoT, writeSoT, setByPath, SOT_PATH } from "./whaletv-credentials.mjs";
 
 // =============================================================================
 // 配置（可通过环境变量覆盖以适配不同部署）
@@ -465,51 +466,89 @@ async function main() {
     `[refresh-auth]   ✓ Gerrit /changes/ 自检通过 (HTTP ${test.status})\n`,
   );
 
-  // 7) 备份 + 写入 mcp.json
-  let backupPath;
+  // 7) 写入 SoT (v3 主路径)
   try {
-    backupPath = await backupMcpJson();
+    const { data, order } = readSoT();
+    setByPath(data, order, "gerrit.auth_header", authHeader);
+    setByPath(data, order, "gerrit.cookie", gerritCookie);
+    if (!data.gerrit?.url) {
+      setByPath(data, order, "gerrit.url", GERRIT_BASE_URL);
+    }
+    if (confluenceCookie) {
+      setByPath(data, order, "confluence.cookie", confluenceCookie);
+      if (!data.confluence?.base_url) {
+        setByPath(data, order, "confluence.base_url", CONFLUENCE_BASE_URL);
+      }
+      if (confluenceUser) setByPath(data, order, "confluence.username", confluenceUser);
+    }
+    setByPath(data, order, "_meta.updated_at", new Date().toISOString());
+    writeSoT(data, order);
+    process.stderr.write(`[refresh-auth] ✓ SoT 已更新 ${SOT_PATH}\n`);
+    process.stderr.write(`[refresh-auth]   gerrit.auth_header + gerrit.cookie\n`);
+    if (confluenceCookie) {
+      process.stderr.write(`[refresh-auth]   confluence.cookie\n`);
+    }
   } catch (e) {
-    process.stderr.write(`[refresh-auth] 备份 mcp.json 失败: ${e.message}\n`);
+    process.stderr.write(`[refresh-auth] 写 SoT 失败: ${e.message}\n`);
     process.exit(3);
   }
 
-  const cfg = await readMcpJson();
-  const gerritHits = injectServerEnv(cfg, GERRIT_SERVER_KEY, {
-    GERRIT_AUTH_HEADER: authHeader,
-    GERRIT_COOKIE: gerritCookie,
-  });
-  let confluenceHits = [];
-  if (confluenceCookie) {
-    confluenceHits = injectServerEnv(cfg, CONFLUENCE_SERVER_KEY, {
-      CONFLUENCE_COOKIE: confluenceCookie,
-    });
-  }
-  // knowledge-mcp 复用三源凭据（顺手把 Gerrit/Confluence 同步过去）
-  injectServerEnv(cfg, "knowledge-mcp-server", {
-    GERRIT_AUTH_HEADER: authHeader,
-    GERRIT_COOKIE: gerritCookie,
-    ...(confluenceCookie ? { CONFLUENCE_COOKIE: confluenceCookie } : {}),
-  });
+  // 8) 双写 mcp.json（兼容模式：--legacy-mcp-json 时启用，或检测到旧结构时自动启用）
+  const legacyFlag = process.argv.includes("--legacy-mcp-json");
+  const skipLegacyFlag = process.argv.includes("--sot-only");
+  let backupPath = null;
 
-  try {
-    await writeMcpJsonAtomic(cfg);
-  } catch (e) {
-    process.stderr.write(
-      `[refresh-auth] 写入 mcp.json 失败: ${e.message}\n` +
-        `已备份原文件: ${backupPath ?? "(无原文件)"}\n`,
-    );
-    process.exit(3);
+  if (!skipLegacyFlag) {
+    // 自动检测：如果 mcp.json 已存在，就同步写（保持兼容性，v3 分阶段迁移期）
+    let mcpJsonExists = false;
+    try {
+      await access(MCP_JSON_PATH);
+      mcpJsonExists = true;
+    } catch { /* not exists */ }
+
+    if (legacyFlag || mcpJsonExists) {
+      try {
+        backupPath = await backupMcpJson();
+      } catch (e) {
+        process.stderr.write(`[refresh-auth] 备份 mcp.json 失败（SoT 已写入，可继续）: ${e.message}\n`);
+      }
+
+      try {
+        const cfg = await readMcpJson();
+        const gerritHits = injectServerEnv(cfg, GERRIT_SERVER_KEY, {
+          GERRIT_AUTH_HEADER: authHeader,
+          GERRIT_COOKIE: gerritCookie,
+        });
+        let confluenceHits = [];
+        if (confluenceCookie) {
+          confluenceHits = injectServerEnv(cfg, CONFLUENCE_SERVER_KEY, {
+            CONFLUENCE_COOKIE: confluenceCookie,
+          });
+        }
+        // knowledge-mcp 复用三源凭据
+        injectServerEnv(cfg, "knowledge-mcp-server", {
+          GERRIT_AUTH_HEADER: authHeader,
+          GERRIT_COOKIE: gerritCookie,
+          ...(confluenceCookie ? { CONFLUENCE_COOKIE: confluenceCookie } : {}),
+        });
+
+        await writeMcpJsonAtomic(cfg);
+        process.stderr.write(
+          `[refresh-auth] ✓ mcp.json 已同步 ${MCP_JSON_PATH}\n` +
+            `[refresh-auth]   gerrit 命中位置: ${gerritHits.join(", ")}\n` +
+            (confluenceHits.length
+              ? `[refresh-auth]   confluence 命中位置: ${confluenceHits.join(", ")}\n`
+              : "") +
+            (backupPath ? `[refresh-auth]   备份: ${backupPath}\n` : ""),
+        );
+      } catch (e) {
+        process.stderr.write(
+          `[refresh-auth] 双写 mcp.json 失败（SoT 已写入，可继续）: ${e.message}\n`,
+        );
+      }
+    }
   }
 
-  process.stderr.write(
-    `[refresh-auth] ✓ 完成。已更新 ${MCP_JSON_PATH}\n` +
-      `[refresh-auth]   gerrit 命中位置: ${gerritHits.join(", ")}\n` +
-      (confluenceHits.length
-        ? `[refresh-auth]   confluence 命中位置: ${confluenceHits.join(", ")}\n`
-        : "") +
-      (backupPath ? `[refresh-auth]   备份: ${backupPath}\n` : ""),
-  );
   process.stderr.write(
     "[refresh-auth] 重启 Kiro（或重连 MCP server）以加载新凭据。\n",
   );

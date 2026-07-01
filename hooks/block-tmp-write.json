@@ -1,0 +1,13 @@
+{
+  "name": "Block /tmp Write",
+  "version": "1.0.0",
+  "description": "拦截通过 shell 重定向写入 /tmp 路径，避免临时文件丢失或权限冲突",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": ["shell"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "检查即将执行的命令：如果命令通过 shell 重定向（`>` 或 `>>`）写入 /tmp/ 路径，你必须立即停止。\n\n为什么拦截：/tmp 目录可能被系统在开发者不知情时清理（尤其是重启后），且多用户环境下存在权限冲突风险。\n\n如果检测到 /tmp 写入：\n1. 说明为什么拦截\n2. 推荐替代：使用 ~/tmp 目录（更安全、权限可控、不会被清理）\n3. 帮用户修改命令后再执行\n\n只对通过 shell 重定向写入的场景生效。如果是 mktemp / tempfile 这类 API 调用，或者用户明确说'我需要 /tmp'，放行。"
+  }
+}

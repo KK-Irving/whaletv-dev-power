@@ -1,0 +1,13 @@
+{
+  "name": "Block git add All",
+  "version": "1.0.0",
+  "description": "拦截 git 全量暂存命令，避免无关变更混入提交",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": ["shell"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "检查即将执行的命令：如果是 git add 且参数是 `.` / `-A` / `--all` / `*` 之一（表示全量暂存），你必须立即停止。\n\n为什么拦截：全量暂存可能把无关变更（调试代码、临时修改、其他 Issue 的改动、编辑器备份文件）一起混入提交，导致：\n- Code review 时被要求拆分 commit\n- 污染 git 历史，追责困难\n- 意外泄露密钥或本地配置\n\n如果检测到全量 git add：\n1. 明确说明为什么拦截\n2. 强制切换到 hunk 级精确暂存：`git add -p`，用户可以对每个 hunk 单独选择 y/n/s/e\n3. 如果用户觉得逐 hunk 太慢，可以先 `git status` 看变更文件列表，然后 `git add <具体文件路径>` 逐文件添加（可接受，但仍不如 `-p` 精确）\n\n只有用户明确说'我知道风险，就是要全量 add'时才能继续。"
+  }
+}

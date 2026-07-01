@@ -246,3 +246,96 @@
 **状态**: 待开始
 
 ---
+
+
+## FR-010 ~ FR-019: v3 架构级治理升级（按 .kiro/specs/v3-platform-upgrade）
+
+**状态**：✅ **P0 / P1 / P2 / P3 全部完成**（2026-07-01）；42/42 tasks 完成；集成测试全部通过；待 knowledge-mcp v1.1.0 npm publish
+**优先级**：高（P0 修复 v2 三层防护中第二层空转的 bug；P1 架构级治理化；P2 补齐 CLI 与治理层；P3 规划 v4）
+**Spec**：[`.kiro/specs/v3-platform-upgrade/`](../.kiro/specs/v3-platform-upgrade/)
+
+### 阶段进度
+
+| 阶段 | 范围 | 状态 |
+|------|------|------|
+| **P0** | Hook 格式修复（自定义 → Kiro 官方 schema）| ✅ 5/5 tasks + 7 个 hook JSON 就位 + 3 处文档同步 |
+| **P1 部署** | deploy.mjs 一键部署（备份/幂等/PATH/schema 校验）| ✅ 5/5 tasks + dry-run 端到端通 |
+| **P1 SoT** | 单一凭据源 `~/.ai/whaletv.yaml` + `whaletv-credentials` CLI + 5 MCP servers sot-loader | ✅ 7/7 tasks + 18/18 round-trip 测试 + 16/16 集成测试 + 4 servers 各注入 10 env |
+| **P1 Skill 重整** | 12 workflow steering → 10 whaletv-* SKILL + 6 通用 skill；3 份精简 rules | ✅ 6/6 tasks + 16 skill 全 description-driven 触发 |
+| **P2 治理** | knowledge-mcp v1.1.0 新增 generate_report + upload_report（Report Fact v1 schema + 自包含 HTML + S3 SigV4 零依赖） | ✅ 6/6 tasks + 31/31 端到端测试 |
+| **P2 CLI** | gerrit-api / gerrit-show / whaletv-credentials 三个跨终端 CLI | ✅ 4/4 tasks + 31/31 pure function 测试 |
+| **P2 README** | Prerequisites / v2→v3 迁移路径 / CLI 章节 / Troubleshooting（6 大类）| ✅ 4/4 tasks |
+| **P2 Taxonomy** | codebase-taxonomy.md（D4/X5/STB 三平台差异速查）| ✅ 2/2 tasks + 交叉 wire 到 local-code / bug-analysis skills |
+| **P3** | Zmind Hub 架构调研文档（v4 起点参考）| ✅ 1/1 task |
+
+### FR-010: Hook 格式修复（P0）
+
+**问题**：v2 `hooks/safety-hooks.json` 是自定义 schema，Kiro 不加载 → 三层防护第二层实际空转。
+
+**方案**：拆成 7 个符合 Kiro 官方 schema 的独立 JSON，Kiro 自动加载并向 AI 发送 `askAgent` prompt。
+
+**产物**：`hooks/{block-sudo, block-mp-push, block-git-add-all, block-root-search, block-tmp-write, block-out-search, block-bulk-copy-out}.json`
+
+### FR-011: 单一凭据源 SoT（P1）
+
+**问题**：v2 凭据分散在 5 个 MCP server 的 env，改一处必须同步 4 处；`setup-creds` / `refresh-auth` 靠 substring 匹配双写，容易漏改。
+
+**方案**：`~/.ai/whaletv.yaml` 单一真源 + `whaletv-credentials` CLI + MCP server 内嵌 `sot-loader.ts`（env 优先兼容）。
+
+**产物**：`scripts/whaletv-credentials.mjs`（7 命令，导出 module 供 setup-creds/refresh-auth 复用）+ `bin/whaletv-credentials` 跨平台包装器 + 5 MCP servers 各 `sot-loader.ts`（6150 bytes 全一致）。
+
+### FR-012: 一键部署脚本（P1）
+
+**问题**：v2 用户手工复制 steering/hooks 到 `~/.kiro/`；跨机器同步 / 非 Power 场景体验割裂。
+
+**方案**：`node scripts/deploy.mjs` 幂等部署 + `.kiro/` 自动备份 + PATH marker block + hook JSON schema 校验 + Kiro 运行检测。
+
+**产物**：`scripts/deploy.mjs` + README v3 迁移路径章节。
+
+### FR-013: Skill/Steering 重整（P1）
+
+**问题**：v2 的 12 份 workflow steering 长且互有重叠；`.kiro/skills/` 里 9 个散落文件混杂过时能力。
+
+**方案**：workflow → `.kiro/skills/whaletv-*/SKILL.md`（10 个）+ 通用能力 → 独立 skill（6 个）+ 3 份精简 rules（critical / conventions / execution）+ codebase-taxonomy 分类速查 + module-path-map 保留。
+
+**产物**：`.kiro/skills/` 16 个标准子目录 + `steering/` 精简到 7 份（含 MIGRATED-TO-SKILLS 索引）。
+
+### FR-014: 治理层报告（P2）
+
+**问题**：Skill 执行完的分析结果没有结构化归档；管理者视角看不到"本周 60% 的 bug 是 null_reference 根因"这类洞察。
+
+**方案**：`knowledge-mcp v1.1.0` 新增 `generate_report`（Report Fact v1 schema + 自包含 HTML）+ `upload_report`（S3 SigV4 零依赖）。
+
+**产物**：4 个新 dist 文件（report-schema / report-template / generate-report / upload-report），2 个 skill 加 Completion Rule。
+
+### FR-015: 跨终端 CLI（P2）
+
+**问题**：v2 只能在 Kiro 内用 MCP 工具；终端里想 `gerrit-show <id>` 不行。
+
+**方案**：`whaletv-credentials` / `gerrit-api` / `gerrit-show` 三个 CLI，从 SoT 读凭据，跨 Windows/Linux/macOS。
+
+**产物**：`scripts/{gerrit-api, gerrit-show}.mjs` + `bin/` 6 个包装器。
+
+### FR-016: README 完善（P2）
+
+**产物**：Prerequisites（含 6 项可选依赖跨平台安装表）+ v2→v3 迁移路径 + CLI 工具章节 + Troubleshooting（6 大类常见问题）。
+
+### FR-017: Codebase 分类速查（P2）
+
+**问题**：D4/X5/STB 三平台架构差异（业务代码根 / 客户定制机制 / ODM 命名 / CP 策略）散落在 module-path-map 各章节，AI 无法快速获取"平台特性"决策依据。
+
+**方案**：`steering/codebase-taxonomy.md`（`inclusion: auto`），10 个维度对比矩阵 + 搜索策略决策树 + 与 skill/工具的联动表。
+
+**产物**：`steering/codebase-taxonomy.md` + `whaletv-local-code` 加"先定平台"步骤 + `whaletv-bug-analysis` 步骤 ⑤ 加 taxonomy 引用。
+
+### FR-018: Zmind Hub 架构调研（P3）
+
+**目标**：当团队规模 > 30 人 或 WAF 反复触发时的 v4 演进方向。
+
+**方案**：`.kiro/specs/v3-platform-upgrade/zmind-hub-design.md` 明确"不做的理由" + "触发升级信号" + "分阶段迁移策略"（B → C → D）。
+
+### FR-019: Codebase Taxonomy 团队 verify TODO（v3.1+）
+
+`steering/codebase-taxonomy.md` 末尾留 5 项 TODO 供团队后续 verify 补充（kernel 版本清单、AOSP 主版本、preload 应用清单、gerrit-hooks 差异、跨平台 CP 工具化）。
+
+---

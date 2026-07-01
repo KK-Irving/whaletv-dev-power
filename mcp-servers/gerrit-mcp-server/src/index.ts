@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// v3: 先加载 SoT（~/.ai/whaletv.yaml）到 process.env，再读取 env（env 已存在则不覆盖）
+import "./sot-loader.js";
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

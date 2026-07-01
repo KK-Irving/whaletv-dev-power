@@ -1,7 +1,7 @@
 {
   "name": "@kk-irving/zmind-mcp-server",
-  "version": "2.1.1",
-  "description": "Zmind (Redmine) MCP Server for WhaleTV Developer Power; v2.1.x adds RAR5 extraction (unar/unrar/7z fallback) + Aliyun WAF retry + concurrency/rate gates; v2.1.1 fixes bin entry path",
+  "version": "2.1.2",
+  "description": "Zmind (Redmine) MCP Server for WhaleTV Developer Power; v2.1.x adds RAR5 extraction (unar/unrar/7z fallback) + Aliyun WAF retry + concurrency/rate gates; v2.1.1 fixes bin entry path; v2.1.2 adds sot-loader for v3 SoT (~/.ai/whaletv.yaml) with env-priority fallback (backward compatible)",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {

@@ -1,28 +1,27 @@
 #!/usr/bin/env node
 /**
- * setup-creds.mjs — 一次性把手填凭据写入 ~/.kiro/settings/mcp.json
+ * setup-creds.mjs — v3: 把手填凭据写入 SoT (~/.ai/whaletv.yaml)，并可选双写 mcp.json
  *
- * 设计目的：
- *   解决 Kiro IDE 安全限制（AI 不能直接写 workspace 外的文件）。AI 在 onboarding
- *   时可以让用户跑 `node scripts/setup-creds.mjs`，凭据通过环境变量传入，
- *   脚本本身不受 workspace 限制，可以写到 `~/.kiro/settings/mcp.json`。
+ * v3 变化：
+ *   - 默认写 SoT（~/.ai/whaletv.yaml），MCP server 通过 sot-loader 读取
+ *   - 加 `--legacy-mcp-json` 开关：同时双写 mcp.json（供还没升 v3 dist 的老用户）
+ *   - 加 `--sot-only` 开关：只写 SoT，不动 mcp.json（新用户干净模式，默认行为）
  *
  * 处理的凭据（仅"手填一次永久"类）：
- *   - ZMIND_API_KEY        → zmind-mcp-server + knowledge-mcp-server
- *   - OPENGROK_USERNAME    → opengrok-mcp-server
- *   - OPENGROK_PASSWORD    → opengrok-mcp-server
+ *   - ZMIND_API_KEY   → zmind.api_key
+ *   - OPENGROK_USERNAME / OPENGROK_PASSWORD → opengrok.username / opengrok.password
  *
  * 不处理（由 refresh-auth.mjs 自动抓 cookie 维护）：
- *   - GERRIT_AUTH_HEADER / GERRIT_COOKIE
- *   - CONFLUENCE_COOKIE
- *
- * 兼容 Kiro Power 与本地两种安装方式：
- *   扫描所有以 server 名结尾的 key（含 power-<name>-<server> 前缀），全部更新。
- *   一个都没找到时，自动创建本地路径 + Power 路径双份。
+ *   - gerrit.auth_header / gerrit.cookie
+ *   - confluence.cookie
  *
  * 调用方式：
+ *   # v3 默认（写 SoT）
  *   ZMIND_API_KEY=xxx OPENGROK_USERNAME=zeasnrd OPENGROK_PASSWORD=yyy \
  *     node scripts/setup-creds.mjs
+ *
+ *   # 兼容模式（同时写 mcp.json）
+ *   ZMIND_API_KEY=xxx node scripts/setup-creds.mjs --legacy-mcp-json
  *
  * 退出码：
  *   0 = 成功
@@ -33,6 +32,7 @@
 import { mkdir, readFile, writeFile, copyFile, access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { readSoT, writeSoT, setByPath, SOT_PATH } from "./whaletv-credentials.mjs";
 
 const MCP_JSON_PATH = join(homedir(), ".kiro", "settings", "mcp.json");
 const POWER_NAME = process.env.WHALE_POWER_NAME?.trim() || "whaletv-dev-power";
@@ -118,67 +118,155 @@ function injectServerEnv(cfg, baseKey, envPatch) {
   return hits;
 }
 
+// =============================================================================
+// v3: SoT 写入
+// =============================================================================
+
+/**
+ * 把收集到的凭据写入 SoT (~/.ai/whaletv.yaml)。
+ * 返回实际写入的键名列表（用于日志）。
+ */
+function writeToSot({ zmindKey, ogUser, ogPass }) {
+  const { data, order } = readSoT();
+  const written = [];
+
+  if (zmindKey) {
+    setByPath(data, order, "zmind.api_key", zmindKey);
+    written.push("zmind.api_key");
+    // zmind.url 缺省时填默认
+    if (!data.zmind?.url) {
+      setByPath(data, order, "zmind.url", "https://zmind.whaletv.com");
+      written.push("zmind.url (默认)");
+    }
+  }
+  if (ogUser) {
+    setByPath(data, order, "opengrok.username", ogUser);
+    written.push("opengrok.username");
+  }
+  if (ogPass) {
+    setByPath(data, order, "opengrok.password", ogPass);
+    written.push("opengrok.password");
+  }
+  if ((ogUser || ogPass) && !data.opengrok?.url) {
+    setByPath(data, order, "opengrok.url", "https://opengrok.zeasn.com");
+    written.push("opengrok.url (默认)");
+  }
+
+  // 更新元数据
+  setByPath(data, order, "_meta.updated_at", new Date().toISOString());
+  if (!data._meta || (typeof data._meta === "object" && !data._meta.version)) {
+    setByPath(data, order, "_meta.version", "1");
+  }
+
+  writeSoT(data, order);
+  return written;
+}
+
+// =============================================================================
+// 主流程
+// =============================================================================
+
+function parseFlags() {
+  const args = process.argv.slice(2);
+  return {
+    legacyMcpJson: args.includes("--legacy-mcp-json"),
+    sotOnly: args.includes("--sot-only"), // 显式声明，默认行为其实也是 sot-only
+  };
+}
+
 async function main() {
   const zmindKey = process.env.ZMIND_API_KEY?.trim() || "";
   const ogUser = process.env.OPENGROK_USERNAME?.trim() || "";
   const ogPass = process.env.OPENGROK_PASSWORD ?? "";
+  const flags = parseFlags();
 
-  const tasks = [];
-  if (zmindKey) {
-    tasks.push({ baseKey: "zmind-mcp-server", env: { ZMIND_API_KEY: zmindKey } });
-    // knowledge-mcp 复用 zmind 凭据做 sync_zmind
-    tasks.push({ baseKey: "knowledge-mcp-server", env: { ZMIND_API_KEY: zmindKey } });
-  }
-  if (ogUser || ogPass) {
-    const env = {};
-    if (ogUser) env.OPENGROK_USERNAME = ogUser;
-    if (ogPass) env.OPENGROK_PASSWORD = ogPass;
-    tasks.push({ baseKey: "opengrok-mcp-server", env });
-  }
-
-  if (tasks.length === 0) {
+  if (!zmindKey && !ogUser && !ogPass) {
     process.stderr.write(
       "[setup-creds] 没有需要写入的凭据。请设置以下任一环境变量后重试：\n" +
         "  ZMIND_API_KEY=<40 位十六进制>\n" +
         "  OPENGROK_USERNAME=<账号>\n" +
-        "  OPENGROK_PASSWORD=<密码>\n",
+        "  OPENGROK_PASSWORD=<密码>\n" +
+        "\n" +
+        "或者交互式创建 SoT：node scripts/whaletv-credentials.mjs init\n",
     );
     process.exit(1);
   }
 
-  let backupPath;
+  // === 步骤 1：写 SoT（v3 主路径）===
+  let written = [];
   try {
-    backupPath = await backupMcpJson();
+    written = writeToSot({ zmindKey, ogUser, ogPass });
   } catch (e) {
-    process.stderr.write(`[setup-creds] 备份 mcp.json 失败: ${e.message}\n`);
+    process.stderr.write(`[setup-creds] 写 SoT 失败: ${e.message}\n`);
     process.exit(3);
   }
 
-  const cfg = await readMcpJson();
-  const allHits = [];
-  for (const t of tasks) {
-    const hits = injectServerEnv(cfg, t.baseKey, t.env);
-    allHits.push({ baseKey: t.baseKey, hits });
+  process.stderr.write(`[setup-creds] ✓ SoT 已更新 ${SOT_PATH}\n`);
+  for (const k of written) {
+    process.stderr.write(`[setup-creds]   ${k}\n`);
   }
 
-  try {
-    await writeMcpJsonAtomic(cfg);
-  } catch (e) {
+  // === 步骤 2（可选）：双写 mcp.json（兼容模式）===
+  if (flags.legacyMcpJson) {
     process.stderr.write(
-      `[setup-creds] 写入 mcp.json 失败: ${e.message}\n` +
-        `已备份原文件: ${backupPath ?? "(无原文件)"}\n`,
+      "[setup-creds] --legacy-mcp-json 已启用，同时写 mcp.json...\n",
     );
-    process.exit(3);
+
+    const tasks = [];
+    if (zmindKey) {
+      tasks.push({ baseKey: "zmind-mcp-server", env: { ZMIND_API_KEY: zmindKey } });
+      tasks.push({ baseKey: "knowledge-mcp-server", env: { ZMIND_API_KEY: zmindKey } });
+    }
+    if (ogUser || ogPass) {
+      const env = {};
+      if (ogUser) env.OPENGROK_USERNAME = ogUser;
+      if (ogPass) env.OPENGROK_PASSWORD = ogPass;
+      tasks.push({ baseKey: "opengrok-mcp-server", env });
+    }
+
+    let backupPath;
+    try {
+      backupPath = await backupMcpJson();
+    } catch (e) {
+      process.stderr.write(`[setup-creds] 备份 mcp.json 失败: ${e.message}\n`);
+      process.stderr.write("[setup-creds] SoT 已写入，mcp.json 未变，可用 SoT 继续。\n");
+      process.exit(3);
+    }
+
+    const cfg = await readMcpJson();
+    const allHits = [];
+    for (const t of tasks) {
+      const hits = injectServerEnv(cfg, t.baseKey, t.env);
+      allHits.push({ baseKey: t.baseKey, hits });
+    }
+
+    try {
+      await writeMcpJsonAtomic(cfg);
+    } catch (e) {
+      process.stderr.write(
+        `[setup-creds] 写入 mcp.json 失败: ${e.message}\n` +
+          `已备份原文件: ${backupPath ?? "(无原文件)"}\n`,
+      );
+      process.stderr.write("[setup-creds] SoT 已写入，可继续；mcp.json 双写失败不阻塞。\n");
+      process.exit(3);
+    }
+
+    process.stderr.write(`[setup-creds] ✓ mcp.json 已更新 ${MCP_JSON_PATH}\n`);
+    for (const { baseKey, hits } of allHits) {
+      process.stderr.write(`[setup-creds]   ${baseKey} → ${hits.join(", ")}\n`);
+    }
+    if (backupPath) process.stderr.write(`[setup-creds]   备份: ${backupPath}\n`);
   }
 
-  process.stderr.write(`[setup-creds] ✓ 完成。已更新 ${MCP_JSON_PATH}\n`);
-  for (const { baseKey, hits } of allHits) {
-    process.stderr.write(`[setup-creds]   ${baseKey} → ${hits.join(", ")}\n`);
-  }
-  if (backupPath) process.stderr.write(`[setup-creds]   备份: ${backupPath}\n`);
+  // === 步骤 3：后续提示 ===
   process.stderr.write(
-    "[setup-creds] 重启 Kiro（或重连 MCP server）以加载新凭据。\n" +
-      "[setup-creds] 接下来跑 scripts/refresh-auth.{ps1,sh} 抓 Gerrit + Confluence cookie。\n",
+    "\n" +
+      "[setup-creds] 下一步：\n" +
+      "[setup-creds]   1. 抓 Gerrit + Confluence session cookie：\n" +
+      "[setup-creds]      PowerShell -ExecutionPolicy Bypass -File scripts\\refresh-auth.ps1  (Windows)\n" +
+      "[setup-creds]      bash scripts/refresh-auth.sh                                          (Linux/macOS)\n" +
+      "[setup-creds]   2. 校验：node scripts/whaletv-credentials.mjs check\n" +
+      "[setup-creds]   3. 重启 Kiro（Reload Window）以加载新凭据\n",
   );
 }
 

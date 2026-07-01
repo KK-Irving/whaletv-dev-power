@@ -1,11 +1,11 @@
-# WhaleTV Developer Power v2 — 开发者 AI 工作流助手
+# WhaleTV Developer Power v3 — 开发者 AI 工作流助手
 
 > 让每一个 WhaleTV 开发者在处理 PR/CR、Bug 分析、Cherry-Pick 时，都能像资深工程师一样高效闭环。
 
 [![Kiro Power](https://img.shields.io/badge/Kiro-Power-purple)](https://kiro.dev)
-[![Type](https://img.shields.io/badge/Type-MCP%20%2B%20Steering-blue)]()
+[![Type](https://img.shields.io/badge/Type-MCP%20%2B%20Steering%2B%20Skills-blue)]()
 [![License](https://img.shields.io/badge/License-UNLICENSED-red)]()
-[![Version](https://img.shields.io/badge/Version-v2.0.0-brightgreen)]()
+[![Version](https://img.shields.io/badge/Version-v3.0.0-brightgreen)]()
 
 ## 简介
 
@@ -17,6 +17,17 @@ WhaleTV Developer Power 是一个面向 WhaleTV 全体开发者的 [Kiro Power](
 - 📚 把跨源历史经验变成**毫秒级检索**
 - 🔐 把过期 cookie 变成**一条命令搞定**
 - 🛡️ 把危险操作变成**三层防护拦截**
+
+## v3.0.0 架构级升级（本轮）
+
+**v3 聚焦架构治理，v2 已发布的所有功能能力完整保留**：
+
+- **Kiro 官方 hook 格式修复**（P0）：v2 的 `hooks/safety-hooks.json` 用自定义 schema，Kiro 实际不加载 —— 三层防护第二层是空的。v3 拆成 7 个符合 Kiro 官方 schema 的独立 JSON，部署后立即生效
+- **单一凭据源 SoT**：`~/.ai/whaletv.yaml` 一处修改 5 个 MCP server 全部生效；`whaletv-credentials` CLI 提供 get/set/check/list/init/migrate
+- **一键部署脚本**：`node scripts/deploy.mjs` 把 steering / hooks / skills 一次同步到 `~/.kiro/`
+- **description-driven skills**：12 份 workflow steering 迁移到 `.kiro/skills/whaletv-*/SKILL.md`，Kiro 通过 YAML front-matter 语义匹配自动激活
+- **精简 steering**：只保留 5 份 `inclusion: always` 的核心规则（critical / conventions / execution / module-path-map / safety-rules）
+- **跨终端 CLI**：`whaletv-credentials` / `gerrit-api` / `gerrit-show` 三个 CLI 工具，Kiro 之外的终端也能用
 
 ## v2.0.0 核心能力（已发布）
 
@@ -30,13 +41,13 @@ WhaleTV Developer Power 是一个面向 WhaleTV 全体开发者的 [Kiro Power](
 | **gerrit-mcp-server** | v1.1.0 | 14 | REST 双通道认证（session 过 nginx 双层网关 / basic 直连），`cherry_pick_change` 自动执行，`get_unresolved_threads` 直接拿 uuid（无需 NoteDb） |
 | **opengrok-mcp-server** | v1.2.0 | 4 | 全文 / 符号 / 路径搜索 + 文件读取 |
 | **confluence-mcp-server** | v1.0.0（新） | 3 | `search_confluence`（CQL 自动包装）/ `get_page` / `list_spaces`，cookie 认证（独立账号 form login） |
-| **knowledge-mcp-server** | v1.0.2（新） | 12 | 三源同步（zmind/gerrit/confluence）+ BGE-small-zh ONNX 嵌入 + SQLite BLOB 向量 + FTS5 全文 + hybrid 跨源检索 + AOSP 模块级精搜 + **`analyze_issue` 端到端工作流**；v1.0.2 支持 Confluence searchv3 fallback（账号无 REST batch 权限时自动降级） |
+| **knowledge-mcp-server** | v1.0.2 → **v1.1.0**（v3） | 12 → **14** | 三源同步（zmind/gerrit/confluence）+ BGE-small-zh ONNX 嵌入 + SQLite BLOB 向量 + FTS5 全文 + hybrid 跨源检索 + AOSP 模块级精搜 + `analyze_issue` 端到端工作流；v1.0.2 加 Confluence searchv3 fallback；**v1.1.0 新增 `generate_report` + `upload_report`（治理层）** |
 
 ### 工作流亮点
 
-- **5 档代码搜索策略**：模块地图 → 本地知识库 → git grep → 已知路径 → OpenGrok（详见 `steering/local-code-guide.md`）
+- **5 档代码搜索策略**：模块地图 → 本地知识库 → git grep → 已知路径 → OpenGrok（详见 skill `whaletv-local-code`）
 - **`analyze_issue` 一键端到端**：拉 issue → 准备工作目录 → 提取关键词 → 三源 hybrid 检索 → 平台/模块推断 → AOSP 精搜（可选）→ 渲染 `analysis-context.md`
-- **凭据自动刷新**：`scripts/refresh-auth.{ps1,sh}` Playwright 一条命令搞定 Gerrit SSO + Confluence form login，自动写入 mcp.json
+- **凭据自动刷新**：`scripts/refresh-auth.{ps1,sh}` Playwright 一条命令搞定 Gerrit SSO + Confluence form login，v3 起写入 SoT（`~/.ai/whaletv.yaml`）+ 兼容双写 mcp.json
 
 ## 项目结构
 
@@ -65,9 +76,14 @@ whaletv-dev-power/
 │   │   └── src/
 │   │       ├── index.ts | auth.ts | http-client.ts | html-strip.ts
 │   │       └── tools/                    # search / get-page / list-spaces
-│   └── knowledge-mcp-server/             # v1.0.2（新）— 12 个工具
+│   └── knowledge-mcp-server/             # v1.0.2 → v1.1.0（v3）— 14 个工具
 │       └── src/
-│           ├── index.ts                  # 12 个工具注册
+│           ├── index.ts                  # 14 个工具注册（v3 加 generate_report + upload_report）
+│           ├── tools/
+│           │   ├── report-schema.ts      # v3: Report Fact v1 类型 + runtime 验证
+│           │   ├── report-template.ts    # v3: 自包含 HTML 模板（内嵌 CSS+JS）
+│           │   ├── generate-report.ts    # v3: 生成 JSON + HTML 落盘
+│           │   └── upload-report.ts      # v3: S3 SigV4 上传（零依赖）
 │           ├── db.ts                     # node:sqlite（Node 22.5+ 内置）+ FTS5 + 触发器
 │           ├── embedder.ts               # @xenova/transformers BGE-small-zh ONNX
 │           ├── index-store.ts            # 进程内 lazy Float32Array 矩阵
@@ -100,8 +116,14 @@ whaletv-dev-power/
 │   ├── local-code-guide.md               # 5 档代码搜索策略
 │   └── safety-rules.md                   # 三层防护体系
 │
-├── hooks/
-│   └── safety-hooks.json                 # 命令拦截规则
+├── hooks/                                # v3 起符合 Kiro 官方 schema，一 hook 一 JSON
+│   ├── block-sudo.json                   # 拦截 sudo 命令
+│   ├── block-mp-push.json                # 拦截推送到 *_mp 保护分支
+│   ├── block-root-search.json            # 拦截根目录/家目录大范围搜索
+│   ├── block-tmp-write.json              # 拦截写入 /tmp
+│   ├── block-out-search.json             # 拦截搜索 out/ 与 prebuilts/
+│   ├── block-git-add-all.json            # 拦截 git add . / -A / --all
+│   └── block-bulk-copy-out.json          # 拦截 rsync/cp -r 批量复制大目录
 ├── agent/
 │   └── whaletv-dev.json                  # Kiro CLI Agent 配置（v2 prompt + 5 server）
 ├── .kiro/
@@ -121,13 +143,65 @@ whaletv-dev-power/
 
 ### 前置条件
 
-| 依赖 | 版本要求 | 说明 |
+**必需依赖**：
+
+| 依赖 | 版本要求 | 说明 | 安装 |
+|---|---|---|---|
+| [Kiro IDE](https://kiro.dev) | 最新 | AI 开发环境 | 官网下载 |
+| Node.js | **≥ 22.5.0** | knowledge-mcp 用 `node:sqlite` 内置模块；`whaletv-credentials` CLI 用 native fs | Windows: `winget install OpenJS.NodeJS`<br>macOS: `brew install node`<br>Linux: [nodejs.org](https://nodejs.org/) |
+| 网络访问 | — | 能访问 `zmind.whaletv.com` / `whale-gerrit.zeasn.com` / `docs.whaletv.com` / `opengrok.zeasn.com`（都是内网）+ `astral.sh` / `npmjs.org`（首次安装用） | 公司内网 |
+| 磁盘 | ≥ 5 GB | 含 ONNX 模型 ~80MB + 知识库索引 ~500MB + 可选 AOSP 索引（几个 G） | — |
+
+**可选依赖**（有更好，无也能跑）：
+
+| 依赖 | 用途 | Windows | Linux | macOS |
+|---|---|---|---|---|
+| unar | RAR5 附件解压（推荐） | `choco install unar` | `apt install unar` | `brew install unar` |
+| 7-Zip | RAR / 7z 附件解压（fallback） | `choco install 7zip` | `apt install p7zip-full` | `brew install p7zip` |
+| unrar | RAR 附件解压（fallback） | — | `apt install unrar` | `brew install unrar` |
+| pdftotext | PDF 附件转文本 | `choco install poppler` | `apt install poppler-utils` | `brew install poppler` |
+| tshark | HCI / btsnoop 日志分析 | Wireshark 安装包含 | `apt install tshark` | `brew install wireshark` |
+| 4 套账号 | 详见"凭据管理"章节 | Zmind + Gerrit SSO + Confluence + OpenGrok | | |
+
+**权限要求**：无 sudo，不修改系统。所有安装都到 `~/.kiro/` / `~/.ai/` / 仓库目录内。
+
+---
+
+### v2 → v3 迁移路径
+
+从 v2.x 升级到 v3，一条命令完成：
+
+```bash
+# 1. 拉最新代码
+git pull
+
+# 2. 部署 v3 结构（会自动备份旧 ~/.kiro/ 到 .kiro.backup-<ts>/）
+node scripts/deploy.mjs
+
+# 3. 迁移凭据 mcp.json → SoT
+node scripts/whaletv-credentials.mjs migrate
+
+# 4. 检查
+node scripts/whaletv-credentials.mjs check
+
+# 5. 重启 Kiro（Reload Window）
+```
+
+`migrate` 会读现有 `~/.kiro/settings/mcp.json` 中的 env 值，写入 `~/.ai/whaletv.yaml`。原 mcp.json 不动（sot-loader 的 env 优先规则保证向后兼容）。
+
+**v2 → v3 变化清单**（用户感知层面）：
+
+| 维度 | v2 | v3 |
 |---|---|---|
-| [Kiro IDE](https://kiro.dev) | 最新 | AI 开发环境 |
-| Node.js | **≥ 22.5.0** | knowledge-mcp 用 `node:sqlite` 内置模块 |
-| 网络 | — | 能访问 zmind.whaletv.com / whale-gerrit.zeasn.com / docs.whaletv.com |
-| 磁盘 | ≥ 5 GB | 含 ONNX 模型 ~80MB + 知识库索引 + 可选 AOSP 索引 |
-| unar / 7z（可选） | — | 处理 .rar/.7z 附件用；Windows: `choco install unar 7zip` |
+| Hook | `hooks/safety-hooks.json`（自定义 schema，Kiro **不加载**）| 7 个独立 JSON `hooks/*.json`（Kiro 官方 schema，自动加载）|
+| 凭据 | 分散在 mcp.json 5 个 server 的 env | 单一真源 `~/.ai/whaletv.yaml` + `whaletv-credentials` CLI |
+| Workflow | 12 份长 steering | 10 个 `.kiro/skills/whaletv-*/SKILL.md`（description-driven）+ 6 个通用 skill |
+| Steering | 12 份混合内容 | 5 份精简 rules（critical / conventions / execution / module-path-map / safety-rules）|
+| 部署 | 手工复制 / Power 安装 | `node scripts/deploy.mjs` 一键幂等 |
+| CLI 工具 | 无 | `whaletv-credentials` / `gerrit-api` / `gerrit-show` 三个跨终端工具 |
+| MCP servers | 5 个（v2.1.1 / v1.1.0 / v1.2.0 / v1.0.0 / v1.0.2）| 5 个（内部加了 sot-loader；**knowledge-mcp bump 到 v1.1.0** 新增 generate_report + upload_report；其他 4 个工具集不变，向后兼容 v2 env）|
+
+**回滚 v3 → v2**：如果 v3 有问题，`.kiro.backup-<ts>/` 有 v2 部署的完整快照。手工恢复即可（v3 部署不会删除 mcp.json）。
 
 ### Step 1：安装 Power
 
@@ -138,37 +212,88 @@ whaletv-dev-power/
    ```
 3. 等待安装完成
 
-### Step 2：跑一键部署（全程 ~ 2 分钟）
+### Step 2：跑一键部署（v3 推荐流程）
+
+**v3 起提供 `scripts/deploy.mjs`** —— 把 steering / hooks / .kiro/skills 一次同步到目标 `~/.kiro/` 或 workspace 的 `.kiro/`，并把 `bin/` 加入 PATH。适用于**非 Kiro Power 安装场景**（如直接 clone 仓库、跨机器同步、workspace 级部署）。
 
 ```powershell
-# Windows
-PowerShell -ExecutionPolicy Bypass -File scripts\setup-v2.ps1
+# Windows — 部署到 ~/.kiro/（用户级，所有 workspace 都能用）
+node scripts\deploy.mjs
+
+# 或部署到指定 workspace 的 .kiro/（workspace 级）
+node scripts\deploy.mjs --workspace D:\code\my-workspace
+
+# 先看会做什么，不实际写入（dry-run）
+node scripts\deploy.mjs --dry-run
 ```
 
 ```bash
 # Linux / macOS
-bash scripts/setup-v2.sh
+node scripts/deploy.mjs                             # 默认 ~/.kiro/
+node scripts/deploy.mjs --workspace ~/code/xxx      # 指定 workspace
+node scripts/deploy.mjs --dry-run                   # 预演
 ```
 
-脚本会全程交互式引导：
+`deploy.mjs` 特性：
 
-1. 检查 Node ≥ 22.5、unar/7z 可选警告
-2. 安装 Playwright + Chromium（首次约 150MB，后续刷新秒级）
-3. **依次 prompt 4 套凭据**（密码不回显、不落盘、不入日志）：
-   - Zmind API Key（登录 zmind.whaletv.com → 我的账户 → API 访问密钥）
-   - OpenGrok 用户名 + 密码（公司分配）
-   - Gerrit SSO 用户名（全小写，如 `winn.wei`）+ SSO 密码
-   - Confluence 用户名（首字母大写，如 `Winn.Wei`，**独立账号**）+ 独立密码
-4. 调 `setup-creds.mjs` 把 Zmind + OpenGrok 凭据写到 `~/.kiro/settings/mcp.json`
-5. 调 `refresh-auth.mjs` 跑 Playwright 抓 Gerrit/Confluence cookie 写入
+- **幂等**：重复运行不产生副作用；每次运行前自动备份 `.kiro/` 到 `.kiro.backup-<ts>/`（保留最近 3 份）
+- **迁移检测**：如果之前部署到别的仓库路径，会在 PATH 里替换旧条目并提示旧位置
+- **锁检测**：Kiro IDE 运行时拒绝写入，避免文件锁失败
+- **schema 校验**：hook JSON 部署前校验必需字段（name/version/when/then），不合规则拒绝写入
+- **可选跳过**：`--skip-hooks` / `--skip-steering` / `--skip-skills` / `--no-path`
 
-### Step 3：重启 Kiro 加载新凭据
+### Step 3：配置凭据（v3 单一真源）
+
+**v3 起凭据统一由 `~/.ai/whaletv.yaml` 管理**（Single Source of Truth，SoT），所有 MCP server 与 CLI 工具通过 `whaletv-credentials get <key>` 读取。
+
+**初次配置**（三选一）：
+
+```bash
+# 方式 A：交互式创建 SoT（推荐，最简洁）
+whaletv-credentials init
+
+# 方式 B：从旧的 mcp.json 一次性迁移
+whaletv-credentials migrate
+
+# 方式 C（兼容）：仍支持 v2 的 setup-v2.{ps1,sh} 全流程一键部署
+PowerShell -ExecutionPolicy Bypass -File scripts\setup-v2.ps1   # Windows
+bash scripts/setup-v2.sh                                          # Linux / macOS
+```
+
+**session 凭据刷新**（Gerrit + Confluence cookie 1-4 周会过期）：
+
+```bash
+# 跑 Playwright 自动抓 cookie 写入 SoT（v3 起自动写 SoT，兼容 v2 写 mcp.json）
+PowerShell -ExecutionPolicy Bypass -File scripts\refresh-auth.ps1   # Windows
+bash scripts/refresh-auth.sh                                         # Linux / macOS
+```
+
+**校验与查询**：
+
+```bash
+whaletv-credentials check                    # 校验必需字段
+whaletv-credentials list                     # 列出已配置键（不含值）
+whaletv-credentials get zmind.api_key        # 拿单个值
+whaletv-credentials set gerrit.cookie "..."  # 手动更新单字段
+whaletv-credentials path                     # 打印 SoT 文件路径
+```
+
+四套账号系统（**Gerrit SSO 与 Confluence 是完全独立的账号系统**，用户名/密码可能不同）：
+
+| 系统 | 用户名规则 | 密码 | 键 |
+|---|---|---|---|
+| Zmind | — | 40 位十六进制 API Key（我的账户 → API 访问密钥） | `zmind.api_key` |
+| OpenGrok | 全小写 | 共享或个人密码 | `opengrok.username` / `opengrok.password` |
+| Gerrit SSO | 全小写（如 `winn.wei`） | SSO 密码（refresh-auth 抓 cookie） | `gerrit.auth_header` / `gerrit.cookie` |
+| Confluence | 首字母大写（如 `Winn.Wei`） | 独立密码（refresh-auth 抓 cookie） | `confluence.cookie`（+ `confluence.username`/`password` 用于刷新时输入） |
+
+### Step 4：重启 Kiro 加载新凭据
 
 `Reload Window`（⌘/Ctrl+Shift+P）或退出重开。
 
-5 个 MCP server 用新凭据启动，可在 Kiro 内直接使用所有功能。
+5 个 MCP server 从 SoT 读凭据启动，可在 Kiro 内直接使用所有功能。
 
-完整模板见仓库根的 [`mcp.json`](mcp.json)。重启后在对话中说"配置" / "setup"触发 `onboarding` 流程做最终验证。
+完整模板见 [`templates/whaletv.yaml.tmpl`](templates/whaletv.yaml.tmpl)。重启后在对话中说"配置" / "setup"触发 `onboarding` 流程做最终验证。
 
 ## 凭据管理（v2 关键）
 
@@ -207,7 +332,7 @@ PowerShell -ExecutionPolicy Bypass -File scripts\refresh-auth.ps1   # Windows
 bash scripts/refresh-auth.sh                                         # Linux/macOS
 ```
 
-详见 [`steering/auth-refresh.md`](steering/auth-refresh.md)。
+详见 skill `whaletv-auth-refresh`（[`.kiro/skills/whaletv-auth-refresh/SKILL.md`](.kiro/skills/whaletv-auth-refresh/SKILL.md)）。
 
 ## 使用方式
 
@@ -256,48 +381,186 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 
 ## 工具列表
 
-### Zmind v2.1.1（16 个）
+所有 MCP 工具按 **`<server> v<version> — <一句话定位>`（工具数）+ 分组表格** 的统一格式列出。**★ 标记**表示 v2/v3 新增或"一站式"能力，值得优先关注。
 
-| 工具 | 功能 |
-|---|---|
-| `get_issue` | Issue 详情（评论、附件、关联、子任务） |
-| `my_issues` | 我的 Issue 列表 |
-| `search_issues` | 关键词搜索 |
-| `update_issue` | 状态/指派/优先级/完成度 |
-| `create_issue` | 创建 Issue |
-| `add_comment` | 添加评论 |
-| `create_time_entry` | 工时记录 |
-| `download_attachment` | 附件下载（v2.0 新增 `save_to`） |
-| `list_projects` / `get_versions` / `get_project_members` / `get_issue_statuses` / `get_trackers` / `get_priorities` / `get_time_activities` | 元信息查询 |
-| ★ `prepare_issue_workspace` | **一站式**创建 `.workspace/issue-<id>/` + 下载 + 路由（zip/tar/RAR5 三档解压、图片/HCI/PDF 工具检测） |
+### Zmind v2.1.1 — Issue 全套增删改查 + 一站式工作目录（16 个）
 
-### Gerrit v1.1.0（14 个）
+| 分组 | 工具 | 功能 |
+|---|---|---|
+| Issue 读 | `get_issue` | Issue 详情（含评论、附件、关联、子任务） |
+| Issue 读 | `my_issues` | 我的待办 Issue 列表 |
+| Issue 读 | `search_issues` | 关键词全文搜索 |
+| Issue 写 | `update_issue` | 状态 / 指派 / 优先级 / 完成度 |
+| Issue 写 | `create_issue` | 创建新 Issue |
+| Issue 写 | `add_comment` | 添加评论 |
+| Issue 写 | `create_time_entry` | 工时记录 |
+| 附件 | `download_attachment` | 附件下载（含 `save_to` 直落盘） |
+| 元信息 | `list_projects` | 项目列表 |
+| 元信息 | `get_versions` | 版本列表（用于 target_version 选择） |
+| 元信息 | `get_project_members` | 项目成员 |
+| 元信息 | `get_issue_statuses` | Issue 状态枚举 |
+| 元信息 | `get_trackers` | Tracker 类型枚举（PR / CR / Task） |
+| 元信息 | `get_priorities` | 优先级枚举 |
+| 元信息 | `get_time_activities` | 工时活动类型 |
+| ★ 一站式 | `prepare_issue_workspace` | 创建 `.workspace/issue-<id>/` + 下载 + 路由（zip/tar/RAR5 三档解压、图片/HCI/PDF 工具检测） |
 
-**读（5）**：`query_change` / `list_branches` / `get_change_comments` / `get_unresolved_threads`（直接拿 uuid，无需 NoteDb） / `search_changes`
+### Gerrit v1.1.0 — REST 双通道认证 + cherry_pick 自动执行（14 个）
 
-**写（9）**：`cherry_pick_change`（★ 自动执行）/ `push_to_gerrit`（git+SSH，唯一 SSH 通道）/ `submit_review_reply`（批量原子）/ `add_review_comment` / `reply_inline_comment` / `mark_comment_resolved` / `add_reviewer` / `remove_reviewer` / `set_review_label`
+| 分组 | 工具 | 功能 |
+|---|---|---|
+| 读 | `query_change` | 单 change 详情 |
+| 读 | `search_changes` | Gerrit query 语法搜索 |
+| 读 | `list_branches` | 项目分支列表（支持 pattern 过滤） |
+| 读 | `get_change_comments` | 所有 inline 评论（按时间升序） |
+| 读 | `get_unresolved_threads` | 未解决 thread + `root_uuid`（无需 NoteDb） |
+| ★ 写 | `cherry_pick_change` | 自动执行 REST cherry-pick（禁止本地 CP） |
+| 写 | `push_to_gerrit` | git+SSH 推送（**唯一使用 SSH 通道**） |
+| 写 | `submit_review_reply` | 批量原子回复评论 |
+| 写 | `add_review_comment` | 单条 inline 评论 |
+| 写 | `reply_inline_comment` | 回复具体评论（含 `in_reply_to`） |
+| 写 | `mark_comment_resolved` | 标记评论已解决 |
+| 写 | `add_reviewer` | 添加 reviewer |
+| 写 | `remove_reviewer` | 移除 reviewer |
+| 写 | `set_review_label` | 设置 Code-Review 标签值（`+1/+2/-1/-2`） |
 
-### OpenGrok（4 个）
+### OpenGrok v1.2.0 — 公版代码远程搜索（4 个）
 
-`search_code` / `search_symbol` / `search_path` / `get_file_content`
+可用项目：`d4_code` / `stb16_code` / `x5_code`
 
-可用项目：`d4_code` / `stb16_code` / `x5_code`（公版代码）
+| 分组 | 工具 | 功能 |
+|---|---|---|
+| 搜索 | `search_code` | 全文搜索（按 project / path 过滤） |
+| 搜索 | `search_symbol` | 符号定义查找 |
+| 搜索 | `search_path` | 路径匹配（收敛文件） |
+| 读取 | `get_file_content` | 拿单文件完整内容 |
 
-### Confluence v1.0.0（3 个）
+### Confluence v1.0.0 — 文档中心检索（3 个）
 
-`search_confluence`（CQL 自动包装）/ `get_page`（HTML 转纯文本，截 8000 字）/ `list_spaces`
+Cookie 认证走独立账号（form login `/dologin.action`），非 SSO。
 
-### Knowledge v1.0.2（12 个）
+| 分组 | 工具 | 功能 |
+|---|---|---|
+| 搜索 | `search_confluence` | CQL 全文搜索（`text~query` 自动包装） |
+| 读取 | `get_page` | 单页面详情（HTML 转纯文本，截 8000 字） |
+| 元信息 | `list_spaces` | 所有 global 空间 |
 
-**同步**：`sync_zmind` / `sync_gerrit` / `sync_confluence`
+### Knowledge v1.1.0 — 本地知识库 + 治理层（14 个，v3 起）
 
-**嵌入**：`embed_pending`（三源）/ `embed_aosp_pending`
+BGE-small-zh ONNX 嵌入 + SQLite BLOB 向量 + FTS5 全文 + 三源 hybrid 跨源检索。首次启动自动下载 ONNX 模型（~80MB）。
 
-**检索**：`search_local`（hybrid / vector / fts × 单源/all 跨源融合）/ `get_indexed`
+| 分组 | 工具 | 功能 |
+|---|---|---|
+| 同步 | `sync_zmind` | 拉 Zmind issues 到本地（增量水位） |
+| 同步 | `sync_gerrit` | 拉 Gerrit changes 到本地（双通道认证） |
+| 同步 | `sync_confluence` | 拉 Confluence pages（含 searchv3 fallback，权限低账号可用） |
+| 嵌入 | `embed_pending` | 三源批量嵌入（BGE-small-zh ONNX） |
+| 嵌入 | `embed_aosp_pending` | AOSP 代码 chunk 批量嵌入 |
+| 检索 | `search_local` | 单源 / 跨源 `vector` \| `fts` \| `hybrid` 三模式检索 |
+| 检索 | `get_indexed` | 拿单条完整索引数据（不含向量） |
+| AOSP | `list_aosp_modules` | 列出可索引的 AOSP 模块（按平台过滤） |
+| AOSP | `index_aosp_module` | 索引单个 AOSP 模块（按平台 + 模块名） |
+| AOSP | `clear_aosp_index` | 按 platform / module 清理索引 |
+| AOSP | `search_aosp` | 模块级 `vector` \| `fts` \| `hybrid` 精搜（结合 module-path-map） |
+| ★ 端到端 | `analyze_issue` | 一键 PR/Bug 分析（拉 issue → 工作目录 → 三源检索 → 平台/模块推断 → AOSP 精搜 → 渲染 analysis-context.md） |
+| ★ 治理（v3） | `generate_report` | Skill 执行报告 JSON + 自包含 HTML（Report Fact v1 schema） |
+| ★ 治理（v3） | `upload_report` | S3 SigV4 上传归档到 `s3://<bucket>/issueAnalysis/{year}/w{week}/`（零依赖） |
 
-**AOSP 精搜**：`list_aosp_modules` / `index_aosp_module` / `clear_aosp_index` / `search_aosp`
+## CLI 工具（跨终端，v3 新增）
 
-★ **端到端**：`analyze_issue`
+除了 MCP 工具（在 Kiro 内使用）外，v3 提供 3 个跨终端 CLI 工具。在**任意终端**（Windows cmd/PowerShell、Linux bash、macOS zsh）都可直接调用，无需打开 Kiro。
+
+**前置条件**：先跑 `node scripts/deploy.mjs` 部署到 `~/.kiro/`，deploy 会把 `<repo>/bin` 加入 PATH。重启终端后 CLI 命令即可直接使用。
+
+### whaletv-credentials — 单一凭据源管理
+
+```bash
+whaletv-credentials init             # 交互式创建 SoT
+whaletv-credentials migrate          # 从 mcp.json 一次性迁移
+whaletv-credentials get <key>        # 读单个凭据（如 zmind.api_key）
+whaletv-credentials set <key> <val>  # 写单个凭据
+whaletv-credentials check            # 校验必需字段（Zmind + OpenGrok + Gerrit 至少一组齐全）
+whaletv-credentials list             # 列出已配置的键（不含值）
+whaletv-credentials path             # 打印 SoT 路径
+```
+
+**示例**：
+
+```bash
+# 只更新一个字段（不覆盖其他）
+whaletv-credentials set gerrit.cookie "GerritAccount=xxx; XSRF_TOKEN=yyy"
+
+# 校验后启动 Kiro
+whaletv-credentials check && echo "OK, launch Kiro"
+```
+
+**特性**：
+- 零第三方依赖（自己解析 YAML；避免 `npm install` 依赖）
+- 每次写入自动备份 `~/.ai/whaletv.yaml.bak.<ts>`（保留最近 3 份）
+- Linux/macOS 自动 `chmod 0600`
+
+### gerrit-api — Gerrit REST API 通用客户端
+
+```bash
+gerrit-api <path>                                       # GET
+gerrit-api <path> -d '<json>'                           # POST（自动检测）
+gerrit-api <path> -d @body.json                         # 从文件读 body
+gerrit-api <path> -X PUT -d '<json>'                    # 显式 PUT
+gerrit-api <path> -X DELETE                             # DELETE
+gerrit-api --debug <path>                               # 打印请求详情
+```
+
+**示例**：
+
+```bash
+# 查我打开的 change
+gerrit-api "/changes/?q=owner:self+status:open&n=10"
+
+# 查某个 change 详情
+gerrit-api "/changes/12345/detail"
+
+# 回复评论
+gerrit-api "/changes/12345/revisions/current/review" -d '{"message":"LGTM"}'
+
+# 添加 reviewer
+gerrit-api "/changes/12345/reviewers" -d '{"reviewer":"alice@example.com"}'
+
+# 移除 reviewer
+gerrit-api "/changes/12345/reviewers/alice@example.com" -X DELETE
+```
+
+**特性**：
+- 自动 XSSI 前缀 `)]}'` 剥离
+- 按认证模式自动决定 /a/ 前缀（session 走 non-/a/、basic 走 /a/）
+- 401 时给出针对性诊断（cookie 过期 → 建议跑 `refresh-auth`）
+- 从 SoT 读凭据；无凭据时报错 + 提示怎么配
+
+### gerrit-show — Gerrit change diff 快速查看
+
+```bash
+gerrit-show <change-id>                    # 完整 diff（commit message + unified diff）
+gerrit-show <change-id> -s                 # 只文件列表（A/M/D 状态 + 行数）
+gerrit-show <change-id> -m                 # JSON metadata（subject / owner / branch / status）
+gerrit-show <change-id> --revision <n>     # 指定 revision（默认 current）
+```
+
+**示例**：
+
+```bash
+# 分页查看完整 diff
+gerrit-show 12345 | less
+
+# 快速看改了哪些文件
+gerrit-show 12345 -s
+
+# 拿 change 标题（配合 jq）
+gerrit-show 12345 -m | jq -r .subject
+```
+
+**特性**：
+- 无需本地 git clone（Gerrit REST 直接拿）
+- 对任何 change 都能看（未合入 / abandoned / draft 均可）
+- 输出可管道到 `less` / `patch` / `diff2html` 等工具
+- 支持三种 change-id 格式：数字 ID / Change-Id 字符串 / `project~branch~Change-Id` 三元组
 
 ## 外部系统集成
 
@@ -313,7 +576,7 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 │  ├── opengrok-mcp-server (v1.2.0, 4 tools)                    │
 │  ├── confluence-mcp-server (v1.0.0, 3 tools)                  │
 │  │     └─ cookie 认证（form login 独立账号）                    │
-│  └── knowledge-mcp-server (v1.0.2, 12 tools)                  │
+│  └── knowledge-mcp-server (v1.1.0, 14 tools) ★ v3 治理新增    │
 │        └─ 三源同步 + 向量+FTS5 + analyze_issue                 │
 │                                                                │
 │  Steering 层（12 份工作流指南）：                                │
@@ -415,11 +678,122 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 
 | 层级 | 机制 | 示例 |
 |---|---|---|
-| 第一层 | 规则约束 | MP 分支禁止自动推送、`git add` 必须用 `-p`、target version 必须用户指定 |
-| 第二层 | Hook 拦截 | 禁止 sudo、禁止搜索 out/prebuilts、禁止 `git add .` / `git add -A` |
+| 第一层 | 规则约束（steering） | MP 分支禁止自动推送、`git add` 必须用 `-p`、target version 必须用户指定 |
+| 第二层 | Hook 拦截（`hooks/*.json`） | 7 个符合 Kiro 官方 schema 的独立 hook JSON，触发时 AI 依据 prompt 拦截并给出替代方案 |
 | 第三层 | 人工确认 | push 前展示 commit 信息等待确认、cherry_pick conflict 不盲目继续 |
 
-详见 [`steering/safety-rules.md`](steering/safety-rules.md)。
+**v3 起 hook 修复**：v2 使用的 `hooks/safety-hooks.json` 是自定义 schema，Kiro 不加载，实际第二层是空的。v3 修复后 7 个独立 hook 都会被 Kiro 自动加载并触发。详见 [`steering/safety-rules.md`](steering/safety-rules.md)。
+
+## Troubleshooting（常见问题）
+
+### 部署与环境
+
+**`node scripts/deploy.mjs` 报 "Node.js xxx 太旧"**
+- 检查 Node 版本：`node --version`，必须 ≥ 22.5.0
+- 升级：Windows `winget upgrade OpenJS.NodeJS`、macOS `brew upgrade node`、Linux 从 [nodejs.org](https://nodejs.org/) 装最新
+
+**`node scripts/deploy.mjs` 报 "检测到 Kiro IDE 正在运行"**
+- deploy 前必须关闭 Kiro，否则配置文件被锁定写入失败
+- 关掉 Kiro 后重跑（`--dry-run` 可以在 Kiro 运行时预览动作但不写入）
+
+**`~/.ai/whaletv.yaml` 权限错误 / SoT 读不到**
+- Linux/macOS 检查文件权限：`ls -la ~/.ai/whaletv.yaml`，应为 `-rw-------`（0600）
+- 手工修：`chmod 0600 ~/.ai/whaletv.yaml`
+- 如果误设了 root 拥有 → `sudo chown $USER ~/.ai/whaletv.yaml`
+
+**PowerShell 报 "npm.ps1 无法加载因为执行策略"**
+- 用 `npm.cmd` 直调而不是 `npm`（避开 ExecutionPolicy）
+- 或临时开：`Set-ExecutionPolicy -Scope Process Bypass`
+
+### MCP Server 启动
+
+**MCP server 启动失败 / Kiro 显示红色感叹号**
+1. 检查 Node 版本：`node --version` ≥ 22.5
+2. 手动测启动：`npx -y @kk-irving/zmind-mcp-server@latest`（应停在 stdio 等待输入，Ctrl+C 退出）
+3. `npm ping` 验证 npm registry 可达
+4. 检查 `~/.kiro/settings/mcp.json` JSON 语法（用 `node -e "console.log(JSON.parse(require('fs').readFileSync('~/.kiro/settings/mcp.json')))"`）
+
+**MCP server 起来但工具调用报 "credentials missing"**
+- 跑 `whaletv-credentials check` 看哪些字段缺
+- 缺 Zmind → `whaletv-credentials set zmind.api_key <40 位十六进制>`
+- 缺 Gerrit cookie → 跑 `scripts/refresh-auth.{ps1,sh}`
+- 缺 OpenGrok → `whaletv-credentials set opengrok.username <>` + `set opengrok.password <>`
+
+**启动 banner 没有 `[sot-loader] 注入 X 个环境变量`**
+- 说明 SoT 完全未加载（可能 SoT 文件不存在、YAML 语法错、或 sot-loader dist 未 rebuild）
+- 手工验证：`node scripts/whaletv-credentials.mjs list`（应列出已配置键）
+- 强制 rebuild 5 个 dist：`cd mcp-servers/<name> && npm.cmd run build`
+
+### 认证
+
+**Gerrit 报 `auth_failed (401, cookie 已过期)`**
+- session 模式 cookie 通常 1-4 周过期
+- 跑 `scripts/refresh-auth.{ps1,sh}` 重新抓 cookie（Playwright 自动登录）
+- 首次跑会装 Playwright + Chromium（~150MB），后续几秒
+
+**Confluence 报 `302 → /login.action` 或 `auth_failed`**
+- Confluence cookie 也过期了（与 Gerrit 独立管理）
+- 同上跑 `refresh-auth`（脚本会同时刷新 Gerrit + Confluence）
+- ⚠️ Confluence 是**独立账号**（用户名首字母可能大写，密码不同于 Gerrit SSO）
+
+**Confluence 报 `403 Not permitted to use confluence`**
+- 账号缺 "Use Confluence" 全局权限（运维侧问题）
+- v1.0.2 起 `sync_confluence` 自动降级到 `/rest/searchv3/1.0/cqlSearch`（权限门槛低于 REST batch）
+- 若还是 403 → 找运维加权限
+
+**Gerrit 启动 banner 显示 `auth_mode=missing`**
+- 两组凭据都不全（`gerrit.auth_header + gerrit.cookie` 与 `gerrit.username + gerrit.http_password` 都缺）
+- 跑 `whaletv-credentials check` 确认，用 `set` 补齐
+
+### Kiro Power namespace
+
+**MCP server 在 Kiro Power 模式安装后没生效**
+- Kiro 会给 server key 加 `power-<powername>-` 前缀，v2 时代要靠 substring 匹配双写
+- v3 起 sot-loader 直接从 SoT 读，与 mcp.json key 名**无关**，天然兼容任何 namespace
+- 老 v2 的 `refresh-auth` / `setup-creds` 仍支持 substring 匹配 mcp.json，向后兼容
+
+### Zmind 与附件
+
+**Zmind WAF 限速 403/429**
+- v2.1.1 自动重试 5 次（`Connection: close` + 退避）
+- 若仍失败，等 5-10 分钟
+- 可降低烈度：`whaletv-credentials set _meta.zmind_min_interval 200` 后重启 Kiro（或直接 mcp.json env 里加 `ZMIND_HTTP_MIN_INTERVAL=200` `ZMIND_FETCH_CONCURRENCY=1`）
+
+**RAR 附件解压失败**
+- v2.1.1 三档降级（unar → unrar → 7z），本机任一可用即成功
+- 都没装 → 参见 Prerequisites "可选依赖" 章节安装
+
+### Knowledge MCP
+
+**knowledge-mcp 首次启动很慢**
+- 会下 BGE-small-zh ONNX 模型（~80MB）到 `./data/models/`
+- 中国大陆可设镜像：`whaletv-credentials set _meta.hf_endpoint https://hf-mirror.com`（或环境变量 `HF_ENDPOINT`）
+- 后续启动秒级
+
+**`node:sqlite` 模块找不到**
+- Node < 22.5.0，升级 Node
+- knowledge-mcp 严格要求 22.5+（用了 `node:sqlite` 内置模块，替代 native better-sqlite3）
+
+**AOSP 索引占用磁盘太大**
+- `clear_aosp_index({ platform, module })` 单独清理某个模块
+- 或整个 SQLite 文件：`~/.kiro/knowledge/knowledge.db` 直接删（会重建）
+
+### CLI 工具
+
+**`whaletv-credentials` 命令找不到**
+- 说明 PATH 里没 `<repo>/bin`
+- 跑 `node scripts/deploy.mjs`（会自动加 PATH，marker block 幂等）
+- 重启终端后 PATH 生效
+- 手工测：`node <repo>/bin/whaletv-credentials --help`
+
+**`gerrit-api` / `gerrit-show` 报 "缺 Gerrit 凭据"**
+- SoT 里 Gerrit 段是空的
+- 跑 `refresh-auth` 抓 session cookie，或 `whaletv-credentials set gerrit.username <> && set gerrit.http_password <>` 走 basic mode
+
+**`gerrit-show 12345` 卡住 / 超时**
+- 检查网络：`curl -o /dev/null -w "%{http_code}\n" https://whale-gerrit.zeasn.com`
+- 检查 SoT `gerrit.url` 是否正确：`whaletv-credentials get gerrit.url`
+- 用 `--debug` 看实际请求：`gerrit-show 12345 --debug 2>&1 | head -20`（等等，这个应该在 gerrit-api，gerrit-show 也可以）
 
 ## 开发
 
@@ -520,18 +894,28 @@ npm publish --access=public        # 用户级 ~/.npmrc 已存 token
 - **Gerrit 双通道认证**（v1.1.0 — 过公司 nginx 双层认证网关）
 - **Zmind RAR5 + WAF 应对**（v2.1.1 — 三档降级解压 + 限速重试）
 - **Confluence MCP**（v1.0.0 — 文档中心检索）
-- **Knowledge MCP**（v1.0.2 — 三源同步 + 向量+FTS5 hybrid 跨源检索 + analyze_issue 端到端工作流 + AOSP 模块级精搜；v1.0.1 修复 sync watermark / default query / 增量 scope；v1.0.2 加 Confluence searchv3 fallback 应对 REST batch 403）
+- **Knowledge MCP**（v1.0.2 — 三源同步 + 向量+FTS5 hybrid 跨源检索 + analyze_issue 端到端工作流 + AOSP 模块级精搜；v1.0.1 修复 sync 3 bug；v1.0.2 加 Confluence searchv3 fallback 应对 REST batch 403）
 - **凭据自动刷新**（refresh-auth — Playwright 一键搞定 Gerrit + Confluence cookie）
 - **一键部署**（setup-v2.{ps1,sh}）
 - 5 档代码搜索策略升级
 
-### 🔜 Phase 3（计划中）
+### ✅ Phase 3 (v3.0.0 — 架构级治理升级)
+- **Kiro 官方 hook 格式修复**（P0）—— 7 个独立 hook JSON 替代自定义 `safety-hooks.json`，三层防护第二层真正生效
+- **单一凭据源 SoT**（`~/.ai/whaletv.yaml`）—— `whaletv-credentials` CLI + 5 个 MCP server 内嵌 sot-loader；env 优先兼容
+- **一键部署脚本 `deploy.mjs`** —— 幂等 + 备份 + Kiro 运行检测 + hook schema 校验
+- **description-driven skills** —— 12 份 workflow steering 迁移到 `.kiro/skills/whaletv-*/SKILL.md`（10 个）+ 6 个通用 skill
+- **精简 steering**（5 份 `always inclusion` rules + module-path-map + codebase-taxonomy + safety-rules + MIGRATED 索引 = 7 份）
+- **跨终端 CLI**：`whaletv-credentials` / `gerrit-api` / `gerrit-show`
+- **治理层**：knowledge-mcp v1.1.0 新增 `generate_report`（JSON + 自包含 HTML）+ `upload_report`（S3 SigV4 零依赖）
+- **Codebase 分类速查表**（D4/X5/STB 三平台差异 + 搜索策略决策树）
+
+### 🔜 Phase 4（计划中）
 - [ ] Kiro CLI Agent 完整支持（`kiro-cli chat --agent whaletv-dev`，CLI 端 steering/skills 加载）
 - [ ] 知识库定时同步（cron / 后台任务）
 - [ ] AOSP 全平台预编译索引（D4/X5/STB 完整模块覆盖）
 - [ ] 多代码库批量操作支持
 
-### 🔮 Phase 4（远期）
+### 🔮 Phase 5（远期）
 - [ ] 自动识别 Issue 类型并推荐工作流
 - [ ] 跨项目 Issue 关联分析
 - [ ] 团队代码提交统计与趋势分析

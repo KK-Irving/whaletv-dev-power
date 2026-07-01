@@ -1,0 +1,18 @@
+#!/usr/bin/env node
+// Unix wrapper for gerrit-api.mjs — 通过 realpath 支持 symlink 部署
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import fs from 'node:fs';
+
+const __filename = fileURLToPath(import.meta.url);
+const realPath = fs.realpathSync(__filename);
+const binDir = path.dirname(realPath);
+const scriptPath = path.resolve(binDir, '..', 'scripts', 'gerrit-api.mjs');
+
+if (!fs.existsSync(scriptPath)) {
+  console.error(`error: 未找到实际脚本 ${scriptPath}`);
+  process.exit(1);
+}
+
+process.argv = [process.argv[0], scriptPath, ...process.argv.slice(2)];
+await import(pathToFileURL(scriptPath).href);

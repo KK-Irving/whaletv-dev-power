@@ -1,7 +1,7 @@
 {
   "name": "@kk-irving/confluence-mcp-server",
-  "version": "1.0.0",
-  "description": "Confluence (Atlassian 6.x) MCP Server for WhaleTV Developer Power; cookie auth, CQL search + page detail + space list",
+  "version": "1.0.1",
+  "description": "Confluence (Atlassian 6.x) MCP Server for WhaleTV Developer Power; cookie auth, CQL search + page detail + space list; v1.0.1 adds sot-loader for v3 SoT (~/.ai/whaletv.yaml) with env-priority fallback (backward compatible)",
   "type": "module",
   "bin": {
     "confluence-mcp-server": "dist/index.js"

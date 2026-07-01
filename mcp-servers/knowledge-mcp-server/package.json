@@ -1,7 +1,7 @@
 {
   "name": "@kk-irving/knowledge-mcp-server",
-  "version": "1.0.2",
-  "description": "Local knowledge base MCP Server: vector (BGE-small-zh ONNX) + FTS5 hybrid retrieval across Zmind PR / Gerrit changes / Confluence pages; v1.0.2 adds Confluence /rest/searchv3/1.0/cqlSearch fallback for accounts without REST batch API permission",
+  "version": "1.1.0",
+  "description": "Local knowledge base MCP Server: vector (BGE-small-zh ONNX) + FTS5 hybrid retrieval across Zmind PR / Gerrit changes / Confluence pages; v1.0.2 adds Confluence /rest/searchv3/1.0/cqlSearch fallback; v1.1.0 adds generate_report / upload_report (governance layer, SigV4 zero-dep S3 upload)",
   "type": "module",
   "bin": {
     "knowledge-mcp-server": "dist/index.js"
