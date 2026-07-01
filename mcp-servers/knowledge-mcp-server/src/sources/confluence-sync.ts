@@ -2,10 +2,32 @@
  * Confluence 同步：拉 pages 写入本地 confluence_pages 表。
  *
  * 使用 cookie 认证（CONFLUENCE_BASE_URL + CONFLUENCE_COOKIE）。
- * 走 GET /rest/api/content?spaceKey=...&type=page 分页拉取所有页面，HTML 转纯文本入库。
+ *
+ * 双通路策略：
+ *   1. REST 主路径（首选）：GET /rest/api/content?spaceKey=...&type=page 分页拉取
+ *      - 增量走 CQL /rest/api/content/search
+ *      - 单页体积、速度都最优
+ *   2. HTML fallback（当 REST 403 时自动降级）：
+ *      /dosearchsite.action + /rest/api/content/{id} 或 /pages/viewpage.action HTML 提正文
+ *      - 适用于账号无 "Use Confluence" + "Search" 全局权限的场景
+ *      - 见 confluence-fallback.ts
+ *
+ * 强制模式（通过 KNOWLEDGE_CONFLUENCE_SYNC_MODE 环境变量）：
+ *   - "auto"（默认）：先 REST，403 时自动切 HTML
+ *   - "rest"：强制 REST（403 就报错）
+ *   - "html"：强制 HTML fallback（跳过 REST，适合已知 403 的账号）
  */
 
 import { getDb, getSyncState, setSyncState, runInTransaction } from "../db.js";
+import { fetchViaHtml } from "./confluence-fallback.js";
+
+type SyncMode = "auto" | "rest" | "html";
+
+function getSyncMode(): SyncMode {
+  const raw = (process.env.KNOWLEDGE_CONFLUENCE_SYNC_MODE ?? "").trim().toLowerCase();
+  if (raw === "rest" || raw === "html") return raw;
+  return "auto";
+}
 
 const CONFLUENCE_BASE_URL = (process.env.CONFLUENCE_BASE_URL ?? "").replace(/\/+$/, "");
 const CONFLUENCE_COOKIE = (process.env.CONFLUENCE_COOKIE ?? "").trim();
@@ -150,11 +172,21 @@ function toCqlDateTime(s: string): string {
  * @param args.limit  最大同步条数（防一次性拉爆）。默认 1000；传 0 / 负数 = 不限
  * @param args.since  仅同步 lastmodified > since 的页面（YYYY-MM-DD HH:mm）
  */
+/**
+ * 判断 error 是否 403（用于自动切 fallback 决策）。
+ */
+function is403(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? "");
+  return /HTTP\s+403/.test(msg) || /403\s+Forbidden/i.test(msg) || /Not permitted/i.test(msg);
+}
+
 export async function syncConfluence(args: {
   space?: string;
   since?: string;
   limit?: number;
-} = {}): Promise<ConfluenceSyncStats> {
+  /** 强制模式（覆盖 KNOWLEDGE_CONFLUENCE_SYNC_MODE） */
+  mode?: SyncMode;
+} = {}): Promise<ConfluenceSyncStats & { mode: SyncMode }> {
   const db = getDb();
   // limit ≤ 0 → 无限拉
   const userLimit = args.limit;
@@ -166,14 +198,7 @@ export async function syncConfluence(args: {
         : userLimit;
   const stateSinceRaw = args.since ?? getSyncState("confluence", "last_full_sync") ?? "";
   const stateSince = stateSinceRaw ? toCqlDateTime(stateSinceRaw) : "";
-
-  // 决定要同步的空间集合
-  let spaces: string[];
-  if (args.space) {
-    spaces = args.space.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-  } else {
-    spaces = await listAllSpaces();
-  }
+  const mode: SyncMode = args.mode ?? getSyncMode();
 
   const upsert = db.prepare(UPSERT_SQL);
   function upsertMany(rows: any[]): void {
@@ -182,73 +207,147 @@ export async function syncConfluence(args: {
     });
   }
 
+  // 决定要同步的空间集合
+  let spaces: string[];
+  if (args.space) {
+    spaces = args.space.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  } else {
+    try {
+      spaces = await listAllSpaces();
+    } catch (e) {
+      throw new Error(
+        `Confluence 无法列出 spaces（${(e as Error).message}）。请检查 CONFLUENCE_COOKIE 是否有效。`,
+      );
+    }
+  }
+
   let fetched = 0;
   let upserted = 0;
   let maxUpdated = stateSinceRaw;
-  const pageSize = 100;
+  let usedMode: SyncMode = "rest";
 
-  for (const spaceKey of spaces) {
-    let start = 0;
-    let pageInSpace = 0;
-    while (fetched < limit) {
-      const remaining = limit - fetched;
-      const n = Math.min(pageSize, remaining);
-      let resp: ListResp;
-      if (stateSince) {
-        // 走 CQL 增量（lastmodified 用 day/minute 精度格式）
-        const cql = `space.key = "${spaceKey}" AND type = page AND lastmodified > "${stateSince}"`;
-        resp = await confluenceGet<ListResp>("/rest/api/content/search", {
-          cql,
-          start,
-          limit: n,
-          expand: "body.storage,version,space",
-        });
-      } else {
-        resp = await confluenceGet<ListResp>("/rest/api/content", {
-          spaceKey,
-          type: "page",
-          start,
-          limit: n,
-          expand: "body.storage,version,space",
-        });
+  // ============================================================
+  // 双通路主循环
+  // ============================================================
+
+  async function tryRest(): Promise<void> {
+    const pageSize = 100;
+    for (const spaceKey of spaces) {
+      let start = 0;
+      let pageInSpace = 0;
+      while (fetched < limit) {
+        const remaining = limit - fetched;
+        const n = Math.min(pageSize, remaining);
+        let resp: ListResp;
+        if (stateSince) {
+          const cql = `space.key = "${spaceKey}" AND type = page AND lastmodified > "${stateSince}"`;
+          resp = await confluenceGet<ListResp>("/rest/api/content/search", {
+            cql,
+            start,
+            limit: n,
+            expand: "body.storage,version,space",
+          });
+        } else {
+          resp = await confluenceGet<ListResp>("/rest/api/content", {
+            spaceKey,
+            type: "page",
+            start,
+            limit: n,
+            expand: "body.storage,version,space",
+          });
+        }
+        const items = resp.results ?? [];
+        if (items.length === 0) break;
+
+        const rows = items.map((p) => ({
+          id: String(p.id),
+          space_key: p.space?.key ?? spaceKey,
+          title: p.title ?? "",
+          body_text: stripHtml(p.body?.storage?.value),
+          version: p.version?.number ?? 0,
+          webui: p._links?.webui ?? "",
+          created: p.history?.createdDate ?? "",
+          updated: p.version?.when ?? "",
+        }));
+        upsertMany(rows);
+
+        fetched += items.length;
+        upserted += items.length;
+        start += items.length;
+        pageInSpace++;
+
+        for (const r of rows) {
+          if (r.updated && r.updated > maxUpdated) maxUpdated = r.updated;
+        }
+
+        process.stderr.write(
+          `[confluence-sync/rest] space=${spaceKey} page=${pageInSpace}, got=${items.length}, total=${fetched}\n`,
+        );
+
+        if (items.length < n) break;
+        await sleep(CONFLUENCE_REQUEST_DELAY_MS);
       }
-      const items = resp.results ?? [];
-      if (items.length === 0) break;
-
-      const rows = items.map((p) => ({
-        id: String(p.id),
-        space_key: p.space?.key ?? spaceKey,
-        title: p.title ?? "",
-        body_text: stripHtml(p.body?.storage?.value),
-        version: p.version?.number ?? 0,
-        webui: p._links?.webui ?? "",
-        created: p.history?.createdDate ?? "",
-        updated: p.version?.when ?? "",
-      }));
-      upsertMany(rows);
-
-      fetched += items.length;
-      upserted += items.length;
-      start += items.length;
-      pageInSpace++;
-
-      // 跟踪最大 updated（用于 watermark）
-      for (const r of rows) {
-        if (r.updated && r.updated > maxUpdated) maxUpdated = r.updated;
-      }
-
-      process.stderr.write(
-        `[confluence-sync] space=${spaceKey} page=${pageInSpace}, got=${items.length}, total=${fetched}\n`,
-      );
-
-      if (items.length < n) break;
-      await sleep(CONFLUENCE_REQUEST_DELAY_MS);
+      if (fetched >= limit) break;
     }
-    if (fetched >= limit) break;
+  }
+
+  async function tryHtml(): Promise<void> {
+    // HTML fallback 通过 fetchViaHtml + onPage 回调 upsert；增量走同一份 since watermark
+    const stats = await fetchViaHtml(
+      { spaces, limit },
+      async (spaceKey, pages) => {
+        const rows = pages.map((p) => ({
+          id: p.id,
+          space_key: p.spaceKey || spaceKey,
+          title: p.title,
+          body_text: p.bodyText,
+          version: p.version,
+          webui: p.webui,
+          created: p.created,
+          updated: p.updated,
+        }));
+        upsertMany(rows);
+        for (const r of rows) {
+          if (r.updated && r.updated > maxUpdated) maxUpdated = r.updated;
+        }
+      },
+      { since: stateSince || undefined },
+    );
+    fetched += stats.fetched;
+    upserted += stats.upserted;
+  }
+
+  if (mode === "html") {
+    usedMode = "html";
+    process.stderr.write(
+      "[confluence-sync] mode=html（强制）— 走 dosearchsite HTML fallback\n",
+    );
+    await tryHtml();
+  } else if (mode === "rest") {
+    usedMode = "rest";
+    await tryRest();
+  } else {
+    // auto: 先 REST，403 时切 HTML
+    try {
+      await tryRest();
+      usedMode = "rest";
+    } catch (e) {
+      if (is403(e) && fetched === 0) {
+        process.stderr.write(
+          `[confluence-sync] REST 403（账号无 batch API 权限）→ 自动切 HTML fallback：${(e as Error).message}\n`,
+        );
+        usedMode = "html";
+        await tryHtml();
+      } else {
+        throw e;
+      }
+    }
   }
 
   // watermark：用已拉取的最大 updated 时间的 CQL 格式（YYYY-MM-DD HH:mm）
-  const watermark = maxUpdated ? toCqlDateTime(maxUpdated) : stateSince || toCqlDateTime(new Date().toISOString());
+  const watermark = maxUpdated
+    ? toCqlDateTime(maxUpdated)
+    : stateSince || toCqlDateTime(new Date().toISOString());
   setSyncState("confluence", "last_full_sync", watermark);
 
   return {
@@ -257,5 +356,6 @@ export async function syncConfluence(args: {
     upserted,
     spaces: spaces.length,
     watermark,
+    mode: usedMode,
   };
 }

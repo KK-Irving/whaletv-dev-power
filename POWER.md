@@ -53,7 +53,7 @@ author: "WhaleTV Team"
 | opengrok-mcp-server | v1.2.0 | 4 | 全文 / 符号 / 路径搜索 + 文件读取 |
 | gerrit-mcp-server | **v1.1.0** | 14 | REST 双通道认证（session + basic），cherry_pick 自动执行，14 个工具 100% 兼容 v1.0 |
 | confluence-mcp-server | **v1.0.0** | 3 | search_confluence / get_page / list_spaces；cookie 认证（form login） |
-| knowledge-mcp-server | **v1.0.1** | 12 | 三源同步 + AOSP 索引 + 嵌入 + hybrid 检索 + analyze_issue 端到端；v1.0.1 修复 sync watermark/query/scope 三个 bug |
+| knowledge-mcp-server | **v1.0.2** | 12 | 三源同步 + AOSP 索引 + 嵌入 + hybrid 检索 + analyze_issue 端到端；v1.0.1 修 sync 3 bug；v1.0.2 加 Confluence searchv3 fallback（REST 403 自动降级） |
 
 ## Available Steering Files
 
@@ -134,7 +134,7 @@ bash scripts/refresh-auth.sh                                         # Linux/mac
 
 > ⚠️ Confluence 是独立账号系统，**不走 SSO**（用户名首字母可能与 SSO 不同）。`refresh-auth` 会单独 prompt 收 Confluence 凭据。
 
-#### knowledge-mcp-server (v1.0.1) — **复用三源凭据**
+#### knowledge-mcp-server (v1.0.2) — **复用三源凭据**
 - 主键：`KNOWLEDGE_DB_PATH`（默认 `./data/knowledge.db`）+ `KNOWLEDGE_MODEL_CACHE_DIR`
 - 复用：`ZMIND_API_KEY` + `GERRIT_AUTH_HEADER`+`GERRIT_COOKIE` + `CONFLUENCE_COOKIE`（与上面三个 server 同源）
 
@@ -258,7 +258,7 @@ list_aosp_modules → index_aosp_module → embed_aosp_pending → search_aosp
 ### confluence-mcp-server v1.0.0（3 个工具）
 `search_confluence`（CQL 自动包装）/ `get_page`（HTML→8000 字纯文本）/ `list_spaces`
 
-### knowledge-mcp-server v1.0.1（12 个工具）
+### knowledge-mcp-server v1.0.2（12 个工具）
 
 同步：`sync_zmind` / `sync_gerrit` / `sync_confluence`
 
@@ -289,10 +289,11 @@ AOSP：`list_aosp_modules` / `index_aosp_module` / `clear_aosp_index` / `search_
 同上，cookie 过期。注意 Confluence 凭据是**独立账号**，refresh-auth 会单独 prompt。
 
 ### Confluence `403 Not permitted to use confluence`
-**账号权限问题，不是配置问题**。即使 cookie 有效，账号缺少 Atlassian 全局 "Use Confluence" + "Search" 权限时，所有批量 content API（`search_confluence` / `sync_confluence`）会被拒。
-- 排查：浏览器登录 docs.whaletv.com 是否能搜索？能 → API 权限缺失
-- 解决：找运维或 Atlassian 管理员加权限，客户端解决不了
-- workaround：`get_page` 拉单页可能仍可用（如对应空间有 read 权限）
+账号权限问题。v1.0.2 起 `sync_confluence` 会**自动降级**到 `/rest/searchv3/1.0/cqlSearch`（Confluence 6.x SPA 前端用的 XHR endpoint，权限门槛低于 REST batch），大多数情况能拿到全量数据。
+- `sync_confluence` 自动切 fallback（auto 模式，默认）
+- 若还要强制走 fallback：`KNOWLEDGE_CONFLUENCE_SYNC_MODE=html` 环境变量或 `sync_confluence({mode:"html"})` 参数
+- 若 searchv3 也 403：账号 read 权限也缺，找运维加"Use Confluence" 全局权限
+- `search_confluence`（confluence-mcp 工具）仍走原 REST API 无 fallback；受影响时用 `search_local(source="confluence")` 走已 sync 的本地库
 
 ### `auth_mode=missing`（启动 banner）
 两组凭据都不全。运行 refresh-auth；或检查 mcp.json 的 `GERRIT_AUTH_HEADER`+`GERRIT_COOKIE`（首选）/ `GERRIT_USERNAME`+`GERRIT_HTTP_PASSWORD`（备选）。

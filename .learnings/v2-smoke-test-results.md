@@ -119,3 +119,23 @@
 - `@kk-irving/zmind-mcp-server@2.1.0` publish 时，npm 7+ 因 `bin` 路径含 `./` 前缀（`./dist/index.js`）自动 strip 整个 bin 字段，导致 `npx -y @kk-irving/zmind-mcp-server@latest` 找不到入口
 - 立即修复 `bin` 路径为 `dist/index.js`、bump 到 v2.1.1 重发，行为与 v2.1.0 完全一致（仅 manifest 字段修复）
 - 记录到 `.learnings/v2-release-checklist.md` 与 `.learnings/ERRORS.md`
+
+## 2026-06-30 补测（knowledge-mcp v1.0.1 / v1.0.2）
+
+修复三个真实使用问题（ERR-002/003/007）+ 加 Confluence searchv3 fallback（ERR-006/008）后重跑：
+
+### v1.0.1 sync 修复验证
+- sync_gerrit first pass: `(owner:self OR reviewer:self) -age:365d` 拉 50 条 ✓
+- sync_gerrit second pass: query 保留 default scope + `after:"YYYY-MM-DD"` 拉 7 条真实增量 ✓
+- watermark 用 max updated day (`2026-06-29`) 而非 sync 开始时间 ✓
+- 三源都加 stderr 进度输出 + `limit:0` 不限上限 ✓
+
+### v1.0.2 Confluence searchv3 fallback
+- REST 主路径：RDCenter space `/rest/api/content?spaceKey=X` 拉 10 条通 ✓
+- HTML fallback（forced mode:"html"）：`/rest/searchv3/1.0/cqlSearch?cql=type = page AND space = "RDCenter"` 单次 got=25 hits，totalSize=2515（发现 RDCenter 实际有 2515 页）✓
+- Per-page body 拿到（REST 单页 GET 权限低于 batch，通了）✓
+- watermark 推进到 `2026-06-30 15:16`（用最大 `version.when`）✓
+
+### 发布
+- `@kk-irving/knowledge-mcp-server@1.0.1` published 2026-06-22
+- `@kk-irving/knowledge-mcp-server@1.0.2` published 2026-06-30

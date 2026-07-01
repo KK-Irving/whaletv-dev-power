@@ -30,7 +30,7 @@ WhaleTV Developer Power 是一个面向 WhaleTV 全体开发者的 [Kiro Power](
 | **gerrit-mcp-server** | v1.1.0 | 14 | REST 双通道认证（session 过 nginx 双层网关 / basic 直连），`cherry_pick_change` 自动执行，`get_unresolved_threads` 直接拿 uuid（无需 NoteDb） |
 | **opengrok-mcp-server** | v1.2.0 | 4 | 全文 / 符号 / 路径搜索 + 文件读取 |
 | **confluence-mcp-server** | v1.0.0（新） | 3 | `search_confluence`（CQL 自动包装）/ `get_page` / `list_spaces`，cookie 认证（独立账号 form login） |
-| **knowledge-mcp-server** | v1.0.1（新） | 12 | 三源同步（zmind/gerrit/confluence）+ BGE-small-zh ONNX 嵌入 + SQLite BLOB 向量 + FTS5 全文 + hybrid 跨源检索 + AOSP 模块级精搜 + **`analyze_issue` 端到端工作流** |
+| **knowledge-mcp-server** | v1.0.2（新） | 12 | 三源同步（zmind/gerrit/confluence）+ BGE-small-zh ONNX 嵌入 + SQLite BLOB 向量 + FTS5 全文 + hybrid 跨源检索 + AOSP 模块级精搜 + **`analyze_issue` 端到端工作流**；v1.0.2 支持 Confluence searchv3 fallback（账号无 REST batch 权限时自动降级） |
 
 ### 工作流亮点
 
@@ -65,7 +65,7 @@ whaletv-dev-power/
 │   │   └── src/
 │   │       ├── index.ts | auth.ts | http-client.ts | html-strip.ts
 │   │       └── tools/                    # search / get-page / list-spaces
-│   └── knowledge-mcp-server/             # v1.0.1（新）— 12 个工具
+│   └── knowledge-mcp-server/             # v1.0.2（新）— 12 个工具
 │       └── src/
 │           ├── index.ts                  # 12 个工具注册
 │           ├── db.ts                     # node:sqlite（Node 22.5+ 内置）+ FTS5 + 触发器
@@ -287,7 +287,7 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 
 `search_confluence`（CQL 自动包装）/ `get_page`（HTML 转纯文本，截 8000 字）/ `list_spaces`
 
-### Knowledge v1.0.1（12 个）
+### Knowledge v1.0.2（12 个）
 
 **同步**：`sync_zmind` / `sync_gerrit` / `sync_confluence`
 
@@ -313,7 +313,7 @@ Kiro 只能操作**当前 workspace 目录内**的文件。源码目录必须作
 │  ├── opengrok-mcp-server (v1.2.0, 4 tools)                    │
 │  ├── confluence-mcp-server (v1.0.0, 3 tools)                  │
 │  │     └─ cookie 认证（form login 独立账号）                    │
-│  └── knowledge-mcp-server (v1.0.1, 12 tools)                  │
+│  └── knowledge-mcp-server (v1.0.2, 12 tools)                  │
 │        └─ 三源同步 + 向量+FTS5 + analyze_issue                 │
 │                                                                │
 │  Steering 层（12 份工作流指南）：                                │
@@ -520,7 +520,7 @@ npm publish --access=public        # 用户级 ~/.npmrc 已存 token
 - **Gerrit 双通道认证**（v1.1.0 — 过公司 nginx 双层认证网关）
 - **Zmind RAR5 + WAF 应对**（v2.1.1 — 三档降级解压 + 限速重试）
 - **Confluence MCP**（v1.0.0 — 文档中心检索）
-- **Knowledge MCP**（v1.0.1 — 三源同步 + 向量+FTS5 hybrid 跨源检索 + analyze_issue 端到端工作流 + AOSP 模块级精搜；v1.0.1 修复 sync watermark / default query / 增量 scope 三个 bug）
+- **Knowledge MCP**（v1.0.2 — 三源同步 + 向量+FTS5 hybrid 跨源检索 + analyze_issue 端到端工作流 + AOSP 模块级精搜；v1.0.1 修复 sync watermark / default query / 增量 scope；v1.0.2 加 Confluence searchv3 fallback 应对 REST batch 403）
 - **凭据自动刷新**（refresh-auth — Playwright 一键搞定 Gerrit + Confluence cookie）
 - **一键部署**（setup-v2.{ps1,sh}）
 - 5 档代码搜索策略升级

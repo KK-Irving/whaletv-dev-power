@@ -92,7 +92,7 @@ ENOENT: no such file or directory, open 'c:\Users\PC\AppData\Roaming\Kiro\User\g
 
 ---
 
-## ERR-006：Confluence 账号无 batch API 权限 → 403（2026-06-22）
+## ERR-006：Confluence 账号无 batch API 权限 → 403（2026-06-22，v1.0.2 已缓解 → 见 ERR-008）
 
 **现象**：用户 cookie 有效（浏览器登录能看 spaces，能搜索网页 `dosearchsite.action`），但 `search_confluence` MCP 工具调用返回：
 
@@ -147,4 +147,29 @@ fetched: 3
 真实只有 3 条 owner/reviewer:self 在 6/11 后更新 — 修复有效。
 
 **预防**：所有 `buildQuery` 类函数检查"用户参数 vs 默认 scope"组合时，**默认 scope 必须无条件叠加**（除非用户显式覆盖），不能因为某个可选参数填了就当作"用户接管全部 query"。
+
+## ERR-008：Confluence REST batch 403 的 fallback endpoint 探测（2026-06-30）
+
+**背景**：ERR-006 中账号在部分 space 上 `/rest/api/content/search` CQL / `/rest/api/content?spaceKey=...` batch 返回 403，虽然浏览器登录能看 spaces + 能网页搜索。当时 workaround 只能"找运维加权限"，客户端阻塞。
+
+**探测过程**：
+1. 尝试 `/dosearchsite.action` HTML 爬取 fallback — 发现 Confluence 6.x 部署已改 SPA 渲染：服务端只返回 30KB HTML shell（含 34 个导航 anchor，0 个搜索结果 anchor），实际结果由前端 JS XHR 拉取
+2. 让用户 F12 抓 XHR，发现真实端点：`/rest/searchv3/1.0/cqlSearch`
+3. 该端点接受 CQL 语法 + `start` / `limit` 分页 + `sessionUuid`（可随机生成）+ `user`（可选，服务端从 cookie X-AUSERNAME 提取）
+4. **权限门槛比 `/rest/api/content/search` 低** — 只要账号有 view permission（能登录看空间）就能调，无需 "Search" 全局权限
+
+**实现**（v1.0.2）：
+- 新增 `mcp-servers/knowledge-mcp-server/src/sources/confluence-fallback.ts` — searchv3 优先 + dosearchsite legacy 双 endpoint 自动探测
+- `syncConfluence({ mode: "auto" | "rest" | "html" })` 参数 + `KNOWLEDGE_CONFLUENCE_SYNC_MODE` env
+- Auto 模式：先 REST，403 时自动切 searchv3 fallback
+- 结果直接从搜索响应拿 body（若含），否则走 `/rest/api/content/{id}` 单页 REST（视图权限低于 batch）；再 fallback 到 `/pages/viewpage.action` HTML 爬 wiki-content div
+
+**验证**（2026-06-30）：
+- `sync_confluence({ mode: "html", limit: 5 })` 拉到 5 页 + 完整 body
+- 单次 searchv3 请求 got=25 条 hits，totalSize=2515（RDCenter 空间总页数）
+- watermark 用 max `version.when` 推进（`2026-06-30 15:16` 格式）
+
+**未来改进**：
+- 若 searchv3 端点也 403（账号完全无 view 权限），可加第三档 fallback：`/rest/api/space/{spaceKey}/content` 路径式 endpoint 探测
+- searchv3 默认按 lastmodified desc 排序（对增量友好），可考虑替代 REST 主路径成为默认（等更多部署验证）
 

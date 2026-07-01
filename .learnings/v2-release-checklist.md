@@ -2,7 +2,7 @@
 
 ## 已完成 ✓
 
-- [x] 代码：5 个 MCP server 全部编译通过（gerrit v1.1.0 / zmind v2.1.1 / confluence v1.0.0 / knowledge v1.0.1 / opengrok 不变）
+- [x] 代码：5 个 MCP server 全部编译通过（gerrit v1.1.0 / zmind v2.1.1 / confluence v1.0.0 / knowledge v1.0.2 / opengrok 不变）
 - [x] Smoke test：19/19 通过（含 confluence form login + 真实命中）
 - [x] 文档：POWER.md / README.md / 5 个 steering / agent prompt 全部升级
 - [x] 部署：scripts/setup-v2.{ps1,sh}（v2 全交互式 4 套凭据收集）+ scripts/setup-creds.mjs + scripts/refresh-auth.{ps1,sh,mjs}
@@ -12,7 +12,7 @@
   - `@kk-irving/gerrit-mcp-server@1.1.0` ✓
   - `@kk-irving/zmind-mcp-server@2.1.1` ✓（v2.1.0 因 bin 路径含 `./` 被 npm strip，立即 v2.1.1 修复重发）
   - `@kk-irving/confluence-mcp-server@1.0.0` ✓
-  - `@kk-irving/knowledge-mcp-server@1.0.1` ✓（v1.0.0 含 sync watermark/query 4 个 bug，v1.0.1 全部修复 — 见 ERR-002/003/007）
+  - `@kk-irving/knowledge-mcp-server@1.0.2` ✓（v1.0.0 4 个 bug → v1.0.1 修复；v1.0.2 加 Confluence searchv3 fallback 应对 REST batch 403 — 见 ERR-002/003/007/008）
 
 ## 待用户执行
 
@@ -42,7 +42,7 @@ git push origin v2.0.0
 - gerrit-mcp v1.1.0 — 双通道认证（过 nginx 双层网关）
 - zmind-mcp v2.1.1 — RAR5 三档解压 + WAF 重试（v2.1.1 修复 bin path）
 - confluence-mcp v1.0.0 — 文档中心 MCP（新）
-- knowledge-mcp v1.0.1 — 本地向量+FTS5 知识库 + analyze_issue 端到端（新；v1.0.0 含 sync watermark/query 4 个 bug，v1.0.1 全部修复）
+- knowledge-mcp v1.0.2 — 本地向量+FTS5 知识库 + analyze_issue 端到端 + Confluence searchv3 fallback（新；v1.0.1 修复 sync 3 bug；v1.0.2 加 fallback）
 - opengrok-mcp（不变）
 
 升级步骤：
@@ -72,7 +72,7 @@ git push origin v2.0.0
 npm unpublish @kk-irving/gerrit-mcp-server@1.1.0
 npm unpublish @kk-irving/zmind-mcp-server@2.1.1
 npm unpublish @kk-irving/confluence-mcp-server@1.0.0
-npm unpublish @kk-irving/knowledge-mcp-server@1.0.1
+npm unpublish @kk-irving/knowledge-mcp-server@1.0.2
 
 # 2. 用户回退到 v1.x
 # 在 mcp.json 改 args 用具体版本：

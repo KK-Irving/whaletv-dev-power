@@ -1,7 +1,7 @@
 {
   "name": "@kk-irving/knowledge-mcp-server",
-  "version": "1.0.1",
-  "description": "Local knowledge base MCP Server: vector (BGE-small-zh ONNX) + FTS5 hybrid retrieval across Zmind PR / Gerrit changes / Confluence pages; v1.0.1 fixes sync_gerrit default query (was 0-hit due to OR precedence)",
+  "version": "1.0.2",
+  "description": "Local knowledge base MCP Server: vector (BGE-small-zh ONNX) + FTS5 hybrid retrieval across Zmind PR / Gerrit changes / Confluence pages; v1.0.2 adds Confluence /rest/searchv3/1.0/cqlSearch fallback for accounts without REST batch API permission",
   "type": "module",
   "bin": {
     "knowledge-mcp-server": "dist/index.js"

@@ -2,7 +2,7 @@
 inclusion: auto
 ---
 
-# 本地知识库工作流（knowledge-mcp v1.0.1）
+# 本地知识库工作流（knowledge-mcp v1.0.2）
 
 ## 何时用
 
@@ -119,11 +119,18 @@ embed_pending({ source: "confluence", batch_size: 200 })
 ### 增量同步（cookie/key 仍有效时）
 
 ```
-sync_zmind()        # 不传 since 时用上次 last_full_sync 水位增量拉
-sync_gerrit()       # default scope (owner:self OR reviewer:self) 始终生效，不会因增量退化拉所有人 changes
-sync_confluence()   # CQL lastmodified > "YYYY-MM-DD HH:mm" 增量
-embed_pending(source=...)  # 处理新增的 stale 行
+sync_zmind()                     # 不传 since 时用上次 last_full_sync 水位增量拉
+sync_gerrit()                    # default scope (owner:self OR reviewer:self) 始终生效
+sync_confluence()                # auto 模式：REST 优先，REST 403 时自动切 searchv3 fallback
+sync_confluence({mode:"html"})   # 强制 searchv3 fallback（用于账号无 REST batch 权限的场景）
+embed_pending(source=...)        # 处理新增的 stale 行
 ```
+
+**sync_confluence 三档模式**（v1.0.2+）：
+- `auto`（默认）：先 REST（`/rest/api/content/search`），403 时自动降级到 searchv3
+- `rest`：强制 REST，403 就报错
+- `html`：跳过 REST 直接 searchv3（`/rest/searchv3/1.0/cqlSearch` + 自动 fallback 到 `/dosearchsite.action`）；适合已知 REST 403 的账号
+- 环境变量 `KNOWLEDGE_CONFLUENCE_SYNC_MODE=html` 全局强制
 
 建议每日跑一次（手动或定时任务）。
 
@@ -190,9 +197,9 @@ Commit Message (commit-message-workflow):
 | `search_local` 返回空 | 先确认 `embed_pending` 跑过；`mode=fts` 是否过严，换 `hybrid` |
 | `search_local` 跨源某源失败 | 工具返回 `<source>_error` 字段，看具体错误（多半是凭据或网络） |
 | `sync_gerrit` 401 | cookie 过期，跑 `scripts/refresh-auth` |
-| `sync_gerrit` 0 命中（v1.0.0） | 已知 bug，升级到 v1.0.1（修复 default query 解析 + 增量丢失 scope） |
-| `sync_zmind` / `sync_confluence` 第二次起 0 命中（v1.0.0） | 已知 bug（watermark ISO 格式），升级到 v1.0.1 |
+| `sync_gerrit` 0 命中（v1.0.0） | 已知 bug，升级到 v1.0.1+（修复 default query 解析 + 增量丢失 scope） |
+| `sync_zmind` / `sync_confluence` 第二次起 0 命中（v1.0.0） | 已知 bug（watermark ISO 格式），升级到 v1.0.1+ |
 | `sync_confluence` 302 → /login.action | cookie 过期，跑 `scripts/refresh-auth` |
-| `sync_confluence` 403 "Not permitted to use confluence" | **账号权限问题**（不是配置）。账号缺 Atlassian 全局 "Use Confluence"+"Search" 权限，找运维加。`get_page` 单页可能仍可用（如对应空间有 read 权限） |
+| `sync_confluence` 403 "Not permitted to use confluence" | v1.0.2 起 auto 模式会自动切 `/rest/searchv3/1.0/cqlSearch` fallback（权限门槛更低，通常能拿到全量数据）。若还失败：强制 `mode:"html"` 或 `KNOWLEDGE_CONFLUENCE_SYNC_MODE=html`；仍失败则账号 view 权限也缺，找运维加 |
 | AOSP `index_aosp_module` 慢 | 一个模块 ~ 几千 chunks 几分钟正常；用 `clear_aosp_index` 重置 |
 | `node:sqlite not found` | Node 版本 < 22.5.0，升级 |
