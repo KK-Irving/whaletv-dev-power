@@ -1,0 +1,8 @@
+{
+  "name": "whaletv-dev-power",
+  "version": "1.0.0",
+  "description": "WhaleTV AOSP TV development rules and workflows for D4/X5/STB platforms",
+  "skills": [
+    "whaletv-dev-power"
+  ]
+}

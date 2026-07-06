@@ -1,0 +1,8 @@
+interface:
+  display_name: WhaleTV Developer Power
+  short_description: WhaleTV AOSP TV development rules and workflows
+  brand_color: "#7C3AED"
+  default_prompt: Use $whaletv-dev-power to help with WhaleTV AOSP development.
+
+policy:
+  allow_implicit_invocation: true
