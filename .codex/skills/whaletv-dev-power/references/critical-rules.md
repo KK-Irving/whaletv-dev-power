@@ -88,6 +88,28 @@ last_updated: 2026-07-01
 - MUST NOT 尝试直接写 `~/.kiro/settings/mcp.json` 或 `~/.ai/whaletv.yaml` —— 会被 Kiro 拒绝
 - **正确做法**：让用户在终端跑 `node scripts/setup-creds.mjs` / `whaletv-credentials.mjs` / `refresh-auth.*`；AI 只负责收集凭据 + 给出命令
 
+
+
+## Push 正向规范（Positive Workflow）
+
+以下是在遵守上述 MUST NOT 约束的前提下，正确的 push 操作方式：
+
+### 正常提交推送
+git push <remote> HEAD:refs/for/<target-branch>
+- 推送到 Gerrit 评审队列，不是直推分支
+- <target-branch> 从 Issue 或用户指定获取，禁止猜测
+
+### Cherry-Pick 跨分支
+使用 gerrit-mcp-server 的 cherry_pick_change 工具：
+- 保留 Gerrit CP 关系链，可追溯原始 change
+- 工具内置 MP 分支检测，无需手动判断
+
+### 提交后验证
+- git log -1 确认 commit 存在
+- git log -1 --format=%B 确认 Change-Id 已生成
+- 若 commit-msg hook 超时导致 Change-Id 缺失：
+  git commit --amend --no-edit 重新触发 hook
+
 ## 强制人审的 GATE 场景
 
 以下场景必须暂停等待用户明确确认词回复才能继续。**AI 不得依据"以前用户说过没关系"跳过**。

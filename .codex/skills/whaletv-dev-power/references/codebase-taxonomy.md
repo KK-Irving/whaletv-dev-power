@@ -129,6 +129,45 @@ STB 客户定制不走目录隔离，而是走 **git branch 隔离** 或 **独�
 3. 找到路径后，回头补到 `module-path-map.md` 对应平台小节
 4. 若发现三平台**目录结构差异比表格描述的更大** → 更新本文件（codebase-taxonomy）
 
+
+
+## 文件归属通用判定流程
+
+当遇到一个文件路径但不确定属于哪个 git 仓库时，按以下流程判定，不依赖硬编码路径表：
+
+### 判定步骤
+
+1. git ls-files <file-path>
+   有输出则文件被当前仓库管理，直接操作。无输出则进入步骤 2。
+
+2. 检查排除原因
+   git check-ignore -v <file-path> 查看是被哪个 .gitignore 排除。
+   常见排除原因：独立 git 仓库（vendor/whale/customer/ 等）、编译产物、外部依赖。
+
+3. 确认子仓库
+   文件所在目录（或其祖先目录）自身有 .git 时，是独立子仓库。
+   进入子仓库目录，切换 git 上下文后再操作。
+
+4. repo manifest 映射
+   无 .git 目录时，查 .repo/manifest.xml。
+   找到对应 project path 的仓库名和远程地址。
+   用 repo forall 或直接 cd 到对应 path 操作。
+
+### 常见排除模式（WhaleTV 项目）
+
+| 被排除路径 | 原因 | 处理方式 |
+|-----------|------|---------|
+| vendor/whale/customer/ | 独立 git 仓库，由 .gitignore 排除 | cd 到子目录操作 |
+| vendor/zeasn/customer/ | 同上（D4 平台） | cd 到子目录操作 |
+| out/ | 编译输出 | 不提交 |
+| prebuilts/ | 预编译工具链 | 不提交 |
+| .repo/ | repo 元数据 | 不触碰 |
+
+### 注意事项
+- git grep 不会搜索被 .gitignore 排除的目录，独立仓库的代码需 cd 进入后单独 grep
+- 跨仓库变更必须分仓库提交，不能在一次 commit 中混合
+- push 时确保在正确的仓库根目录下执行
+
 ## 与 skill / MCP 工具的联动
 
 ## PID Build Chain & Smart Partition System

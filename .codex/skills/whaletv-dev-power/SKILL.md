@@ -44,10 +44,23 @@ See references/module-path-map.md for 90+ module paths.
 - No out/ or prebuilts/ bulk copy -- Copy only specific artifacts
 
 ### Git
+
+#### Prohibited
 - No git add . / -A / --all / * -- Always git add -p
 - No push to MP branches (*_mp) -- Require explicit approval
 - No git commit --amend -m -- Edit in editor, preserve Change-Id
 - No local cherry-pick then push -- Use Gerrit REST API
+
+#### Positive Workflow
+- Normal push: git push <remote> HEAD:refs/for/<target-branch>
+- Cross-branch cherry-pick: use gerrit-mcp-server cherry_pick_change (preserves CP chain)
+
+#### commit-msg Hook Timeout
+If git commit times out on Gerrit hook:
+1. git log -1 -- check if commit was actually created
+2. git log -1 --format=%B -- check if Change-Id was generated
+3. If missing Change-Id: git commit --amend --no-edit (re-runs hook)
+See references/git-troubleshooting.md for full guide
 
 ### Workflow
 - No guessing target_version -- From Zmind issue or ask user
@@ -96,6 +109,7 @@ get_issue -> determine platform -> extract keywords -> module path map -> git gr
 
 ## Pre-Commit Checklist
 
+- Check git identity: git config user.name / user.email matches current environment (company vs personal)
 - Code compiles
 - No debug code
 - Change scope precise
