@@ -183,3 +183,4 @@ See references/network-search-guide.md for full details.
 - references/module-path-map.md -- 90+ module paths
 - references/codebase-taxonomy.md -- Platform architecture
 - references/critical-rules.md -- Full MUST NOT rules
+- references/mcp-config-manual.md -- MCP server registration in config.toml

@@ -18,3 +18,6 @@ scripts/test-*.cmd
 # Issue 工作目录：prepare_issue_workspace 工具自动创建，含从 Zmind 下载的附件
 # 不进 git，避免污染源码仓库且可能含 PII / 客户敏感信息
 .workspace/
+
+# 本地知识库数据库：knowledge-mcp-server 运行时自动创建，按环境不同内容不同
+data/
